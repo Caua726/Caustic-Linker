@@ -195,26 +195,34 @@ fn get_obj(ls as *LinkerState, idx as i32) as *reader.ObjFile {
 // _start stub
 // ============================================================
 
-let is i32 as START_STUB_SIZE with imut = 20;
-let is i32 as START_STUB_REL32_OFF with imut = 4;
+let is i32 as START_STUB_SIZE with imut = 28;
+let is i32 as START_STUB_REL32_OFF with imut = 12;
 
 fn emit_start_stub(buf as *reader.ByteBuffer) as void {
-    reader.buf_emit8(buf, 72);  // xor rbp, rbp
+    reader.buf_emit8(buf, 72);  // xor rbp, rbp  (48 31 ed)
     reader.buf_emit8(buf, 49);
     reader.buf_emit8(buf, 237);
-    reader.buf_emit8(buf, 232); // call rel32
+    reader.buf_emit8(buf, 95);  // pop rdi        (5f) — argc
+    reader.buf_emit8(buf, 72);  // mov rsi, rsp   (48 89 e6) — argv
+    reader.buf_emit8(buf, 137);
+    reader.buf_emit8(buf, 230);
+    reader.buf_emit8(buf, 72);  // and rsp, -16   (48 83 e4 f0) — align stack
+    reader.buf_emit8(buf, 131);
+    reader.buf_emit8(buf, 228);
+    reader.buf_emit8(buf, 240);
+    reader.buf_emit8(buf, 232); // call rel32     (e8 xx xx xx xx)
     reader.buf_emit32_le(buf, 0);
-    reader.buf_emit8(buf, 72);  // mov rdi, rax
+    reader.buf_emit8(buf, 72);  // mov rdi, rax   (48 89 c7)
     reader.buf_emit8(buf, 137);
     reader.buf_emit8(buf, 199);
-    reader.buf_emit8(buf, 72);  // mov rax, 60
+    reader.buf_emit8(buf, 72);  // mov rax, 60    (48 c7 c0 3c 00 00 00)
     reader.buf_emit8(buf, 199);
     reader.buf_emit8(buf, 192);
     reader.buf_emit8(buf, 60);
     reader.buf_emit8(buf, 0);
     reader.buf_emit8(buf, 0);
     reader.buf_emit8(buf, 0);
-    reader.buf_emit8(buf, 15);  // syscall
+    reader.buf_emit8(buf, 15);  // syscall         (0f 05)
     reader.buf_emit8(buf, 5);
 }
 
