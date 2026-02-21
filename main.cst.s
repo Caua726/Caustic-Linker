@@ -329,10 +329,10 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   .long 4
 .global __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_linker_cst_START_STUB_SIZE
 __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_linker_cst_START_STUB_SIZE:
-  .long 20
+  .long 28
 .global __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_linker_cst_START_STUB_REL32_OFF
 __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_linker_cst_START_STUB_REL32_OFF:
-  .long 4
+  .long 12
 .global __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_elf_writer_cst_ET_EXEC
 __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_elf_writer_cst_ET_EXEC:
   .long 2
@@ -2989,12 +2989,12 @@ main:
   jmp .L82
 .L83:
   mov rbx, QWORD PTR [rbp-2464]
-  mov r12, 4
+  mov r12, 8
   mov r15, rbx
   mov r14, r12
   imul r15, r14
   mov r13, r15
-  mov rbx, 262144
+  mov rbx, 1048576
   mov r15, r13
   mov r14, rbx
   add r15, r14
@@ -3024,7 +3024,7 @@ main:
 .L86:
 .L87:
   mov rbx, QWORD PTR [rbp-2500]
-  mov r12, 524288
+  mov r12, 2097152
   mov r15, rbx
   mov r14, r12
   xor rax, rax
@@ -3035,7 +3035,7 @@ main:
   test r15, r15
   jz .L88
   lea rbx, [rbp-2500]
-  mov r12, 524288
+  mov r12, 2097152
   mov r15, rbx
   mov QWORD PTR [r15], r12
   jmp .L89
@@ -5728,7 +5728,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-152], 8
   mov rcx, QWORD PTR [rbp-152]
   mov r15, r12
-  shr r15, cl
+  sar r15, cl
   mov r13, r15
   mov QWORD PTR [rbp-160], 255
   mov r14, r13
@@ -5845,7 +5845,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-152], 8
   mov rcx, QWORD PTR [rbp-152]
   mov r15, r12
-  shr r15, cl
+  sar r15, cl
   mov r13, r15
   mov QWORD PTR [rbp-160], 255
   mov r14, r13
@@ -5880,7 +5880,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-184], 16
   mov rcx, QWORD PTR [rbp-184]
   mov r15, r12
-  shr r15, cl
+  sar r15, cl
   mov r13, r15
   mov QWORD PTR [rbp-192], 255
   mov r14, r13
@@ -5915,7 +5915,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-216], 24
   mov rcx, QWORD PTR [rbp-216]
   mov r15, r12
-  shr r15, cl
+  sar r15, cl
   mov r13, r15
   mov QWORD PTR [rbp-224], 255
   mov r14, r13
@@ -6032,7 +6032,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-152], 8
   mov rcx, QWORD PTR [rbp-152]
   mov r15, r12
-  shr r15, cl
+  sar r15, cl
   mov r13, r15
   mov QWORD PTR [rbp-160], 255
   mov r14, r13
@@ -6067,7 +6067,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-184], 16
   mov rcx, QWORD PTR [rbp-184]
   mov r15, r12
-  shr r15, cl
+  sar r15, cl
   mov r13, r15
   mov QWORD PTR [rbp-192], 255
   mov r14, r13
@@ -6102,7 +6102,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-216], 24
   mov rcx, QWORD PTR [rbp-216]
   mov r15, r12
-  shr r15, cl
+  sar r15, cl
   mov r13, r15
   mov QWORD PTR [rbp-224], 255
   mov r14, r13
@@ -6137,7 +6137,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-248], 32
   mov rcx, QWORD PTR [rbp-248]
   mov r15, r12
-  shr r15, cl
+  sar r15, cl
   mov r13, r15
   mov QWORD PTR [rbp-256], 255
   mov r14, r13
@@ -6172,7 +6172,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-280], 40
   mov rcx, QWORD PTR [rbp-280]
   mov r15, r12
-  shr r15, cl
+  sar r15, cl
   mov r13, r15
   mov QWORD PTR [rbp-288], 255
   mov r14, r13
@@ -6207,7 +6207,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-312], 48
   mov rcx, QWORD PTR [rbp-312]
   mov r15, r12
-  shr r15, cl
+  sar r15, cl
   mov r13, r15
   mov QWORD PTR [rbp-320], 255
   mov r14, r13
@@ -6242,7 +6242,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-344], 56
   mov rcx, QWORD PTR [rbp-344]
   mov r15, r12
-  shr r15, cl
+  sar r15, cl
   mov r13, r15
   mov QWORD PTR [rbp-352], 255
   mov r14, r13
@@ -7777,7 +7777,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-272], 4
   mov rcx, QWORD PTR [rbp-272]
   mov r15, QWORD PTR [rbp-264]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-280], r15
   mov r15, r12
   mov rax, QWORD PTR [rbp-280]
@@ -9572,7 +9572,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-2432], 4
   mov rcx, QWORD PTR [rbp-2432]
   mov r15, QWORD PTR [rbp-2424]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-2440], r15
   mov r15, QWORD PTR [rbp-2440]
   mov DWORD PTR [rbp-376], r15d
@@ -9844,7 +9844,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-2848], 32
   mov rcx, QWORD PTR [rbp-2848]
   mov r15, QWORD PTR [rbp-2840]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-2856], r15
   mov r14, QWORD PTR [rbp-2856]
   movsxd r15, r14d
@@ -10000,7 +10000,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-3144], 32
   mov rcx, QWORD PTR [rbp-3144]
   mov r15, QWORD PTR [rbp-3136]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-3152], r15
   mov r14, QWORD PTR [rbp-3152]
   movsxd r15, r14d
@@ -11468,6 +11468,54 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, 237
+  mov rdi, rbx
+  mov rsi, r12
+  call __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_elf_reader_cst_buf_emit8
+  mov rbx, rax
+  mov rbx, QWORD PTR [rbp-56]
+  mov r12, 95
+  mov rdi, rbx
+  mov rsi, r12
+  call __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_elf_reader_cst_buf_emit8
+  mov rbx, rax
+  mov rbx, QWORD PTR [rbp-56]
+  mov r12, 72
+  mov rdi, rbx
+  mov rsi, r12
+  call __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_elf_reader_cst_buf_emit8
+  mov rbx, rax
+  mov rbx, QWORD PTR [rbp-56]
+  mov r12, 137
+  mov rdi, rbx
+  mov rsi, r12
+  call __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_elf_reader_cst_buf_emit8
+  mov rbx, rax
+  mov rbx, QWORD PTR [rbp-56]
+  mov r12, 230
+  mov rdi, rbx
+  mov rsi, r12
+  call __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_elf_reader_cst_buf_emit8
+  mov rbx, rax
+  mov rbx, QWORD PTR [rbp-56]
+  mov r12, 72
+  mov rdi, rbx
+  mov rsi, r12
+  call __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_elf_reader_cst_buf_emit8
+  mov rbx, rax
+  mov rbx, QWORD PTR [rbp-56]
+  mov r12, 131
+  mov rdi, rbx
+  mov rsi, r12
+  call __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_elf_reader_cst_buf_emit8
+  mov rbx, rax
+  mov rbx, QWORD PTR [rbp-56]
+  mov r12, 228
+  mov rdi, rbx
+  mov rsi, r12
+  call __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_elf_reader_cst_buf_emit8
+  mov rbx, rax
+  mov rbx, QWORD PTR [rbp-56]
+  mov r12, 240
   mov rdi, rbx
   mov rsi, r12
   call __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_elf_reader_cst_buf_emit8
@@ -13429,7 +13477,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov QWORD PTR [rbp-1928], 8
   mov rcx, QWORD PTR [rbp-1928]
   mov r15, rbx
-  shr r15, cl
+  sar r15, cl
   mov r12, r15
   mov QWORD PTR [rbp-1936], 255
   mov r14, r12
@@ -13457,7 +13505,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov QWORD PTR [rbp-1952], 16
   mov rcx, QWORD PTR [rbp-1952]
   mov r15, rbx
-  shr r15, cl
+  sar r15, cl
   mov r12, r15
   mov QWORD PTR [rbp-1960], 255
   mov r14, r12
@@ -13485,7 +13533,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov QWORD PTR [rbp-1976], 24
   mov rcx, QWORD PTR [rbp-1976]
   mov r15, rbx
-  shr r15, cl
+  sar r15, cl
   mov r12, r15
   mov QWORD PTR [rbp-1984], 255
   mov r14, r12
@@ -14646,7 +14694,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov QWORD PTR [rbp-1424], 8
   mov rcx, QWORD PTR [rbp-1424]
   mov r15, QWORD PTR [rbp-1416]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-1432], r15
   mov QWORD PTR [rbp-1440], 255
   mov r14, QWORD PTR [rbp-1432]
@@ -14677,7 +14725,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov QWORD PTR [rbp-1512], 16
   mov rcx, QWORD PTR [rbp-1512]
   mov r15, QWORD PTR [rbp-1504]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-1520], r15
   mov QWORD PTR [rbp-1528], 255
   mov r14, QWORD PTR [rbp-1520]
@@ -14708,7 +14756,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov QWORD PTR [rbp-1600], 24
   mov rcx, QWORD PTR [rbp-1600]
   mov r15, QWORD PTR [rbp-1592]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-1608], r15
   mov QWORD PTR [rbp-1616], 255
   mov r14, QWORD PTR [rbp-1608]
@@ -14846,7 +14894,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov QWORD PTR [rbp-1952], 8
   mov rcx, QWORD PTR [rbp-1952]
   mov r15, QWORD PTR [rbp-1944]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-1960], r15
   mov QWORD PTR [rbp-1968], 255
   mov r14, QWORD PTR [rbp-1960]
@@ -14877,7 +14925,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov QWORD PTR [rbp-2040], 16
   mov rcx, QWORD PTR [rbp-2040]
   mov r15, QWORD PTR [rbp-2032]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-2048], r15
   mov QWORD PTR [rbp-2056], 255
   mov r14, QWORD PTR [rbp-2048]
@@ -14908,7 +14956,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov QWORD PTR [rbp-2128], 24
   mov rcx, QWORD PTR [rbp-2128]
   mov r15, QWORD PTR [rbp-2120]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-2136], r15
   mov QWORD PTR [rbp-2144], 255
   mov r14, QWORD PTR [rbp-2136]
@@ -15474,7 +15522,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov QWORD PTR [rbp-280], 4
   mov rcx, QWORD PTR [rbp-280]
   mov r15, QWORD PTR [rbp-272]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-288], r15
   mov r15, r12
   mov rax, QWORD PTR [rbp-288]
@@ -16800,7 +16848,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov QWORD PTR [rbp-304], 24
   mov rcx, QWORD PTR [rbp-304]
   mov r15, QWORD PTR [rbp-296]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-312], r15
   mov r14, QWORD PTR [rbp-288]
   mov r15, QWORD PTR [rbp-312]
@@ -17640,7 +17688,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov QWORD PTR [rbp-1880], 8
   mov rcx, QWORD PTR [rbp-1880]
   mov r15, QWORD PTR [rbp-1872]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-1888], r15
   mov QWORD PTR [rbp-1896], 255
   mov r14, QWORD PTR [rbp-1888]
@@ -17671,7 +17719,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov QWORD PTR [rbp-1968], 16
   mov rcx, QWORD PTR [rbp-1968]
   mov r15, QWORD PTR [rbp-1960]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-1976], r15
   mov QWORD PTR [rbp-1984], 255
   mov r14, QWORD PTR [rbp-1976]
@@ -17702,7 +17750,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov QWORD PTR [rbp-2056], 24
   mov rcx, QWORD PTR [rbp-2056]
   mov r15, QWORD PTR [rbp-2048]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-2064], r15
   mov QWORD PTR [rbp-2072], 255
   mov r14, QWORD PTR [rbp-2064]
@@ -17878,7 +17926,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov QWORD PTR [rbp-2504], 8
   mov rcx, QWORD PTR [rbp-2504]
   mov r15, QWORD PTR [rbp-2496]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-2512], r15
   mov QWORD PTR [rbp-2520], 255
   mov r14, QWORD PTR [rbp-2512]
@@ -17909,7 +17957,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov QWORD PTR [rbp-2592], 16
   mov rcx, QWORD PTR [rbp-2592]
   mov r15, QWORD PTR [rbp-2584]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-2600], r15
   mov QWORD PTR [rbp-2608], 255
   mov r14, QWORD PTR [rbp-2600]
@@ -17940,7 +17988,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_l
   mov QWORD PTR [rbp-2680], 24
   mov rcx, QWORD PTR [rbp-2680]
   mov r15, QWORD PTR [rbp-2672]
-  shr r15, cl
+  sar r15, cl
   mov QWORD PTR [rbp-2688], r15
   mov QWORD PTR [rbp-2696], 255
   mov r14, QWORD PTR [rbp-2688]
@@ -23453,7 +23501,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-1232], 8
   mov rcx, QWORD PTR [rbp-1232]
   mov r15, rbx
-  shr r15, cl
+  sar r15, cl
   mov r12, r15
   mov QWORD PTR [rbp-1240], 255
   mov r14, r12
@@ -23474,7 +23522,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-1248], 16
   mov rcx, QWORD PTR [rbp-1248]
   mov r15, rbx
-  shr r15, cl
+  sar r15, cl
   mov r12, r15
   mov QWORD PTR [rbp-1256], 255
   mov r14, r12
@@ -23495,7 +23543,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-1264], 24
   mov rcx, QWORD PTR [rbp-1264]
   mov r15, rbx
-  shr r15, cl
+  sar r15, cl
   mov r12, r15
   mov QWORD PTR [rbp-1272], 255
   mov r14, r12
@@ -23516,7 +23564,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-1280], 32
   mov rcx, QWORD PTR [rbp-1280]
   mov r15, rbx
-  shr r15, cl
+  sar r15, cl
   mov r12, r15
   mov QWORD PTR [rbp-1288], 255
   mov r14, r12
@@ -23537,7 +23585,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-1296], 40
   mov rcx, QWORD PTR [rbp-1296]
   mov r15, rbx
-  shr r15, cl
+  sar r15, cl
   mov r12, r15
   mov QWORD PTR [rbp-1304], 255
   mov r14, r12
@@ -23558,7 +23606,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-1312], 48
   mov rcx, QWORD PTR [rbp-1312]
   mov r15, rbx
-  shr r15, cl
+  sar r15, cl
   mov r12, r15
   mov QWORD PTR [rbp-1320], 255
   mov r14, r12
@@ -23579,7 +23627,7 @@ __run_media_caua_Caua_caua_Documentos_Projetos_Pessoais_Caustic_caustic_linker_e
   mov QWORD PTR [rbp-1328], 56
   mov rcx, QWORD PTR [rbp-1328]
   mov r15, rbx
-  shr r15, cl
+  sar r15, cl
   mov r12, r15
   mov QWORD PTR [rbp-1336], 255
   mov r14, r12

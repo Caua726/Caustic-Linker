@@ -254,9 +254,9 @@ fn main(argc as i64, argv as i64) as i32 {
     }
 
     // Initialize heap: file_sizes * 4 + 256KB (extra for dynamic linking)
-    let is i64 as heap_size = total_file_size * 4 + 262144;
+    let is i64 as heap_size = total_file_size * 8 + 1048576;
     if (needed_count > 0) { heap_size = heap_size + 524288; } // extra 512KB for dynamic sections
-    if (heap_size < 524288) { heap_size = 524288; } // minimum 512KB
+    if (heap_size < 2097152) { heap_size = 2097152; } // minimum 2MB
     mem.gheapinit(heap_size);
 
     if (verbose == 1) {
