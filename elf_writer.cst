@@ -140,7 +140,7 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
         strtab_file_off = symtab_file_off + out_symtab.len;
         shstrtab_file_off = strtab_file_off + out_strtab.len;
 
-        let is i64 as shdr_start = shstrtab_file_off + shstrtab.len;
+        let is i64 as shdr_start with mut = shstrtab_file_off + shstrtab.len;
         if (shdr_start % 8 != 0) { shdr_start = shdr_start + 8 - (shdr_start % 8); }
         shdr_file_off = shdr_start;
     }
@@ -329,7 +329,7 @@ fn write_dynamic_executable(ls as *linker.LinkerState, output_path as *u8) as i3
     // DT_NEEDED * nlibs + DT_HASH + DT_STRTAB + DT_SYMTAB + DT_STRSZ + DT_SYMENT
     // + DT_PLTGOT + DT_PLTRELSZ + DT_PLTREL + DT_JMPREL + DT_FLAGS + DT_NULL = nlibs + 11
     // + DT_RELA + DT_RELASZ + DT_RELAENT if data syms exist = +3
-    let is i32 as dyn_extra = 0;
+    let is i32 as dyn_extra with mut = 0;
     if (ndata_syms > 0) { dyn_extra = 3; }
     let is i64 as dynamic_size = (cast(i64, ls.needed_count) + 11 + cast(i64, dyn_extra)) * 16;
 
