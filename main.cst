@@ -153,6 +153,103 @@ fn lib_to_soname(name as *u8) as *u8 {
 }
 
 // ============================================================
+// Library entry point (for integrated pipeline)
+// ============================================================
+
+// Link object files into an executable.
+// obj_paths: array of *u8 pointers to .o file paths
+// obj_count: number of object files
+// output_path: output executable path
+// lib_names: array of *u8 pointers to library names (e.g. "c", "m")
+// lib_count: number of libraries
+// Caller must have initialized the heap before calling this.
+fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
+             lib_names as *u8, lib_count as i32) as i32 {
+    let is *i64 as paths_arr = cast(*i64, obj_paths);
+
+    // Calculate total file sizes for internal buffers
+    let is i64 as total_file_size with mut = 0;
+    let is i32 as fi with mut = 0;
+    while (fi < obj_count) {
+        let is *u8 as path = cast(*u8, paths_arr[fi]);
+        let is i64 as fd = linux.open(path, linux.O_RDONLY, 0);
+        if (fd >= 0) {
+            let is i64 as sz = linux.lseek(fd, 0, linux.SEEK_END);
+            total_file_size = total_file_size + sz;
+            linux.close(fd);
+        }
+        fi = fi + 1;
+    }
+
+    // Initialize linker state
+    let is linker.LinkerState as ls = linker.linker_init(4194304);
+    ls.entry_name = "main";
+    ls.verbose = 0;
+    ls.do_strip = 0;
+    ls.do_map = 0;
+    ls.keep_empty = 0;
+
+    // Store needed libs
+    if (lib_count > 0) {
+        let is *i64 as names_arr = cast(*i64, lib_names);
+        ls.needed_libs = mem.galloc(cast(i64, lib_count) * 8);
+        let is *i64 as lib_arr = cast(*i64, ls.needed_libs);
+        let is i32 as lci with mut = 0;
+        while (lci < lib_count) {
+            let is *u8 as raw_name = cast(*u8, names_arr[lci]);
+            lib_arr[lci] = cast(i64, lib_to_soname(raw_name));
+            lci = lci + 1;
+        }
+        ls.needed_count = lib_count;
+    }
+
+    // Read all object files
+    ls.objs = mem.galloc(cast(i64, obj_count) * 8);
+    ls.obj_count = obj_count;
+
+    fi = 0;
+    while (fi < obj_count) {
+        let is *u8 as path = cast(*u8, paths_arr[fi]);
+        let is *reader.ObjFile as obj = cast(*reader.ObjFile, mem.galloc(sizeof(reader.ObjFile)));
+
+        let is i32 as err = reader.read_obj(path, obj);
+        if (err != 0) {
+            print_str("caustic-ld: error: failed to read ");
+            print_str(path);
+            print_str("\n");
+            return 1;
+        }
+
+        let is *i64 as arr = cast(*i64, ls.objs);
+        arr[fi] = cast(i64, obj);
+        fi = fi + 1;
+    }
+
+    // Phase 1: Merge sections
+    linker.merge_sections(&ls);
+
+    // Phase 2: Assign virtual addresses
+    linker.assign_addresses(&ls);
+
+    // Phase 3: Build symbol table + patch _start
+    let is i32 as sym_err = linker.build_symtab(&ls);
+    if (sym_err != 0) { return 1; }
+
+    let is i32 as write_err with mut = 0;
+
+    if (ls.needed_count > 0) {
+        linker.collect_dynamic_syms(&ls);
+        linker.alloc_dynamic_bufs(&ls);
+        write_err = writer.write_dynamic_executable(&ls, output_path);
+    } else {
+        linker.apply_relocations(&ls);
+        write_err = writer.write_executable(&ls, output_path);
+    }
+
+    return write_err;
+}
+
+// ============================================================
 // Main
 // ============================================================
 
