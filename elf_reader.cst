@@ -347,7 +347,7 @@ fn print_hex(n as i64) as void {
 }
 
 // ============================================================
-// read_obj — parse a single .o file
+// read_obj helpers
 // ============================================================
 
 fn read_file(path as *u8, out_size as *i64) as *u8 {
@@ -363,97 +363,66 @@ fn read_file(path as *u8, out_size as *i64) as *u8 {
     return buf;
 }
 
-fn read_obj(path as *u8, obj as *ObjFile) as i32 {
-    obj.filename = path;
-    obj.sym_count = 0;
-    obj.reloc_count = 0;
-    obj.text_offset = 0;
-    obj.data_offset = 0;
-    obj.rodata_offset = 0;
-    obj.bss_offset = 0;
-    obj.bss_size = 0;
+fn print_error(msg as *u8, path as *u8) as void {
+    print_str(msg);
+    print_str(path);
+    print_str("\n");
+}
 
-    // Read file
-    let is i64 as fsize with mut = 0;
-    let is *u8 as data = read_file(path, &fsize);
-    if (cast(i64, data) == 0) {
-        print_str("error: cannot open ");
-        print_str(path);
-        print_str("\n");
-        return 1;
-    }
-    obj.data = data;
-    obj.file_size = fsize;
-
-    // Validate ELF header
+// Validate ELF64 header: magic, class, endian, type, machine.
+// Returns 0 on success, 1 on error.
+fn validate_elf_header(data as *u8, fsize as i64, path as *u8) as i32 {
     if (fsize < 64) {
-        print_str("error: file too small: ");
-        print_str(path);
-        print_str("\n");
+        print_error("error: file too small: ", path);
         return 1;
     }
-
-    // Magic: 7f 45 4c 46
     if (data[0] != 127 || data[1] != 69 || data[2] != 76 || data[3] != 70) {
-        print_str("error: bad ELF magic: ");
-        print_str(path);
-        print_str("\n");
+        print_error("error: bad ELF magic: ", path);
         return 1;
     }
-
-    // Class = 2 (64-bit)
     if (data[4] != 2) {
-        print_str("error: not 64-bit ELF: ");
-        print_str(path);
-        print_str("\n");
+        print_error("error: not 64-bit ELF: ", path);
         return 1;
     }
-
-    // Data = 1 (little-endian)
     if (data[5] != 1) {
-        print_str("error: not little-endian: ");
-        print_str(path);
-        print_str("\n");
+        print_error("error: not little-endian: ", path);
         return 1;
     }
-
-    // e_type = ET_REL (offset 16)
     let is i64 as e_type = read_u16(data, 16);
     if (e_type != cast(i64, ET_REL)) {
-        print_str("error: not relocatable: ");
-        print_str(path);
-        print_str("\n");
+        print_error("error: not relocatable: ", path);
         return 1;
     }
-
-    // e_machine = EM_X86_64 (offset 18)
     let is i64 as e_machine = read_u16(data, 18);
     if (e_machine != cast(i64, EM_X86_64)) {
-        print_str("error: not x86_64: ");
-        print_str(path);
-        print_str("\n");
+        print_error("error: not x86_64: ", path);
         return 1;
     }
+    return 0;
+}
 
-    // Section header info
-    let is i64 as e_shoff = read_u64(data, 40);      // section header table offset
-    let is i64 as e_shentsize = read_u16(data, 58);   // section header entry size
-    let is i64 as e_shnum = read_u16(data, 60);       // number of section headers
-    let is i64 as e_shstrndx = read_u16(data, 62);    // section name string table index
+// Temporary struct to pass section scan results out of parse_section_headers
+struct ScanResult {
+    symtab_off as i64;
+    symtab_size as i64;
+    symtab_link as i64;
+    symtab_info as i64;
+    symtab_entsize as i64;
+    strtab_off as i64;
+    rela_text_off as i64;
+    rela_text_size as i64;
+    rela_data_off as i64;
+    rela_data_size as i64;
+}
 
-    if (e_shoff == 0 || e_shnum == 0) {
-        print_str("error: no section headers: ");
-        print_str(path);
-        print_str("\n");
-        return 1;
-    }
-
-    // Find .shstrtab
+// Scan all section headers, populate ObjFile sections and ScanResult metadata.
+fn parse_section_headers(data as *u8, obj as *ObjFile, sr as *ScanResult,
+                         e_shoff as i64, e_shentsize as i64, e_shnum as i64,
+                         e_shstrndx as i64) as void {
     let is i64 as shstrtab_sh = e_shoff + e_shstrndx * e_shentsize;
     let is i64 as shstrtab_off = read_u64(data, shstrtab_sh + 24);
     let is *u8 as shstrtab = cast(*u8, cast(i64, data) + shstrtab_off);
 
-    // Initialize section data to empty
     obj.text.data = cast(*u8, 0);
     obj.text.size = 0;
     obj.data_sec.data = cast(*u8, 0);
@@ -461,31 +430,25 @@ fn read_obj(path as *u8, obj as *ObjFile) as i32 {
     obj.rodata.data = cast(*u8, 0);
     obj.rodata.size = 0;
 
-    // Scan section headers to find sections by name
-    let is i64 as symtab_off with mut = 0;
-    let is i64 as symtab_size with mut = 0;
-    let is i64 as symtab_link with mut = 0;  // strtab section index
-    let is i64 as symtab_info with mut = 0;  // first global sym index
-    let is i64 as symtab_entsize with mut = 24;
-
-    let is i64 as strtab_off with mut = 0;
-
-    let is i64 as rela_text_off with mut = 0;
-    let is i64 as rela_text_size with mut = 0;
-    let is i64 as rela_data_off with mut = 0;
-    let is i64 as rela_data_size with mut = 0;
+    sr.symtab_off = 0;
+    sr.symtab_size = 0;
+    sr.symtab_link = 0;
+    sr.symtab_info = 0;
+    sr.symtab_entsize = 24;
+    sr.strtab_off = 0;
+    sr.rela_text_off = 0;
+    sr.rela_text_size = 0;
+    sr.rela_data_off = 0;
+    sr.rela_data_size = 0;
 
     let is i64 as si with mut = 0;
     while (si < e_shnum) {
         let is i64 as sh = e_shoff + si * e_shentsize;
         let is i64 as sh_name_off = read_u32(data, sh);
         let is i64 as sh_type = read_u32(data, sh + 4);
-        let is i64 as sh_flags = read_u64(data, sh + 8);
         let is i64 as sh_offset = read_u64(data, sh + 24);
         let is i64 as sh_size = read_u64(data, sh + 32);
         let is i64 as sh_link = read_u32(data, sh + 40);
-        let is i64 as sh_info = read_u32(data, sh + 44);
-
         let is *u8 as name = strtab_get(shstrtab, sh_name_off);
 
         if (sh_type == cast(i64, SHT_PROGBITS)) {
@@ -511,44 +474,44 @@ fn read_obj(path as *u8, obj as *ObjFile) as i32 {
             }
         }
         else if (sh_type == cast(i64, SHT_SYMTAB)) {
-            symtab_off = sh_offset;
-            symtab_size = sh_size;
-            symtab_link = sh_link;
-            symtab_info = sh_info;
+            sr.symtab_off = sh_offset;
+            sr.symtab_size = sh_size;
+            sr.symtab_link = sh_link;
             if (read_u64(data, sh + 56) > 0) {
-                symtab_entsize = read_u64(data, sh + 56);
+                sr.symtab_entsize = read_u64(data, sh + 56);
             }
         }
         else if (sh_type == cast(i64, SHT_STRTAB) && si != e_shstrndx) {
-            strtab_off = sh_offset;
+            sr.strtab_off = sh_offset;
         }
         else if (sh_type == cast(i64, SHT_RELA)) {
             if (streq_lit(name, ".rela.text") == 1) {
-                rela_text_off = sh_offset;
-                rela_text_size = sh_size;
+                sr.rela_text_off = sh_offset;
+                sr.rela_text_size = sh_size;
             }
             else if (streq_lit(name, ".rela.data") == 1) {
-                rela_data_off = sh_offset;
-                rela_data_size = sh_size;
+                sr.rela_data_off = sh_offset;
+                sr.rela_data_size = sh_size;
             }
         }
 
         si = si + 1;
     }
+}
 
-    // Parse symbol table
-    let is *u8 as strtab = cast(*u8, cast(i64, data) + strtab_off);
+// Parse symbol table entries into obj.syms array.
+fn parse_symbols(data as *u8, obj as *ObjFile, sr as *ScanResult) as void {
+    let is *u8 as strtab = cast(*u8, cast(i64, data) + sr.strtab_off);
     let is i64 as num_syms with mut = 0;
-    if (symtab_size > 0 && symtab_entsize > 0) {
-        num_syms = symtab_size / symtab_entsize;
+    if (sr.symtab_size > 0 && sr.symtab_entsize > 0) {
+        num_syms = sr.symtab_size / sr.symtab_entsize;
     }
 
-    // Allocate symbol array (skip null entry at index 0)
     obj.syms = mem.galloc((num_syms + 1) * sizeof(ObjSym));
 
     let is i64 as syi with mut = 0;
     while (syi < num_syms) {
-        let is i64 as ent = symtab_off + syi * symtab_entsize;
+        let is i64 as ent = sr.symtab_off + syi * sr.symtab_entsize;
         let is i64 as st_name = read_u32(data, ent);
         let is i32 as st_info = cast(i32, read_u8(data, ent + 4));
         let is i64 as st_shndx = read_u16(data, ent + 6);
@@ -564,49 +527,83 @@ fn read_obj(path as *u8, obj as *ObjFile) as i32 {
         sym_add(obj, sym_name, sym_name_len, sec, st_value, binding, stype);
         syi = syi + 1;
     }
+}
 
-    // Parse .rela.text relocations
+// Parse relocations from a single .rela section into obj.relocs.
+fn parse_rela_section(data as *u8, obj as *ObjFile,
+                      rela_off as i64, rela_size as i64, sec_idx as i32) as void {
+    if (rela_size <= 0) { return; }
+    let is i64 as num_rela = rela_size / 24;
+    let is i64 as ri with mut = 0;
+    while (ri < num_rela) {
+        let is i64 as rent = rela_off + ri * 24;
+        let is i64 as r_offset = read_u64(data, rent);
+        let is i64 as r_info = read_u64(data, rent + 8);
+        let is i64 as r_addend = read_u64(data, rent + 16);
+
+        let is i32 as rsym = cast(i32, r_info >> 32);
+        let is i64 as rtype = r_info & 4294967295;
+
+        reloc_add(obj, r_offset, rsym, rtype, r_addend, sec_idx);
+        ri = ri + 1;
+    }
+}
+
+// ============================================================
+// read_obj — parse a single .o file
+// ============================================================
+
+fn read_obj(path as *u8, obj as *ObjFile) as i32 {
+    obj.filename = path;
+    obj.sym_count = 0;
+    obj.reloc_count = 0;
+    obj.text_offset = 0;
+    obj.data_offset = 0;
+    obj.rodata_offset = 0;
+    obj.bss_offset = 0;
+    obj.bss_size = 0;
+
+    // Read file
+    let is i64 as fsize with mut = 0;
+    let is *u8 as data = read_file(path, &fsize);
+    if (cast(i64, data) == 0) {
+        print_error("error: cannot open ", path);
+        return 1;
+    }
+    obj.data = data;
+    obj.file_size = fsize;
+
+    // Validate ELF header
+    if (validate_elf_header(data, fsize, path) != 0) {
+        return 1;
+    }
+
+    // Section header info
+    let is i64 as e_shoff = read_u64(data, 40);
+    let is i64 as e_shentsize = read_u16(data, 58);
+    let is i64 as e_shnum = read_u16(data, 60);
+    let is i64 as e_shstrndx = read_u16(data, 62);
+
+    if (e_shoff == 0 || e_shnum == 0) {
+        print_error("error: no section headers: ", path);
+        return 1;
+    }
+
+    // Parse section headers
+    let is ScanResult as sr;
+    parse_section_headers(data, obj, &sr, e_shoff, e_shentsize, e_shnum, e_shstrndx);
+
+    // Parse symbol table
+    parse_symbols(data, obj, &sr);
+
+    // Parse relocations
     let is i64 as total_relocs with mut = 0;
-    if (rela_text_size > 0) { total_relocs = total_relocs + rela_text_size / 24; }
-    if (rela_data_size > 0) { total_relocs = total_relocs + rela_data_size / 24; }
-
+    if (sr.rela_text_size > 0) { total_relocs = total_relocs + sr.rela_text_size / 24; }
+    if (sr.rela_data_size > 0) { total_relocs = total_relocs + sr.rela_data_size / 24; }
     obj.relocs = mem.galloc((total_relocs + 1) * sizeof(ObjReloc));
 
-    if (rela_text_size > 0) {
-        let is i64 as num_rela = rela_text_size / 24;
-        let is i64 as ri with mut = 0;
-        while (ri < num_rela) {
-            let is i64 as rent = rela_text_off + ri * 24;
-            let is i64 as r_offset = read_u64(data, rent);
-            let is i64 as r_info = read_u64(data, rent + 8);
-            let is i64 as r_addend = read_u64(data, rent + 16);
-            // Sign-extend addend if high bit set (it's a signed i64, but we read as u64)
-            // For PC32 relocs, addend is typically -4
-
-            let is i32 as rsym = cast(i32, r_info >> 32);
-            let is i64 as rtype = r_info & 4294967295; // 0xFFFFFFFF
-
-            reloc_add(obj, r_offset, rsym, rtype, r_addend, SECIDX_TEXT);
-            ri = ri + 1;
-        }
-    }
-
-    if (rela_data_size > 0) {
-        let is i64 as num_rela = rela_data_size / 24;
-        let is i64 as ri with mut = 0;
-        while (ri < num_rela) {
-            let is i64 as rent = rela_data_off + ri * 24;
-            let is i64 as r_offset = read_u64(data, rent);
-            let is i64 as r_info = read_u64(data, rent + 8);
-            let is i64 as r_addend = read_u64(data, rent + 16);
-
-            let is i32 as rsym = cast(i32, r_info >> 32);
-            let is i64 as rtype = r_info & 4294967295;
-
-            reloc_add(obj, r_offset, rsym, rtype, r_addend, SECIDX_DATA);
-            ri = ri + 1;
-        }
-    }
+    parse_rela_section(data, obj, sr.rela_text_off, sr.rela_text_size, SECIDX_TEXT);
+    parse_rela_section(data, obj, sr.rela_data_off, sr.rela_data_size, SECIDX_DATA);
 
     return 0;
 }
