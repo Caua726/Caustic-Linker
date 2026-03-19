@@ -870,7 +870,6 @@ _std_linux_cst_exit:
   mov rax, rbx
   mov rdi, r12
   syscall
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 60
@@ -1237,7 +1236,6 @@ _std_mem_cst_release:
   mov rdi, r12
   mov rsi, r14
   call _std_linux_cst_munmap
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 64
@@ -1799,8 +1797,7 @@ _std_mem_cst_galloc:
   mov r12, rax
 .loc 1 128 0
   mov r12, 1
-  mov r13, r12
-  movsxd r13, r13d
+  movsxd r13, r12d
   mov rdi, r13
   call _std_linux_cst_exit
   mov r12, rax
@@ -1853,7 +1850,6 @@ _std_mem_cst_gfree:
   mov rdi, r13
   mov rsi, r12
   call _std_mem_cst_free
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 56
@@ -2081,8 +2077,7 @@ _std_mem_cst_memcmp:
 .L35:
 .loc 1 167 0
   mov rbx, 0
-  mov r12, rbx
-  movsxd r12, r12d
+  movsxd r12, ebx
   mov rax, r12
   add rsp, 200
   pop r15
@@ -2297,7 +2292,6 @@ _caustic_linker_elf_reader_cst_buf_emit8:
   mov rdi, r12
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_buf_ensure
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, rbx
   mov r12, QWORD PTR [r12]
@@ -2878,7 +2872,6 @@ _caustic_linker_elf_reader_cst_buf_append:
   mov rdi, r13
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_buf_ensure
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, rbx
   mov r12, QWORD PTR [r12]
@@ -3417,10 +3410,8 @@ _caustic_linker_elf_reader_cst_streq:
 .loc 1 1418 0
   mov r14, rcx
 .loc 1 196 0
-  mov r8, r12
-  movsxd r8, r8d
-  mov r9, r14
-  movsxd r9, r9d
+  movsxd r8, r12d
+  movsxd r9, r14d
   mov rax, r8
   cmp rax, r9
   je .L50
@@ -3442,22 +3433,18 @@ _caustic_linker_elf_reader_cst_streq:
   mov r8, r14
 .L52:
 .loc 1 198 0
-  mov r14, r8
-  movsxd r14, r14d
-  mov r9, r12
-  movsxd r9, r9d
+  movsxd r14, r8d
+  movsxd r9, r12d
   mov rax, r14
   cmp rax, r9
   jge .L53
 .loc 1 199 0
-  mov rsi, r8
-  movsxd rsi, esi
+  movsxd rsi, r8d
   mov rdi, QWORD PTR [rbp-84]
   add rdi, rsi
   mov r15, rdi
   movzx r15, BYTE PTR [r15]
-  mov rax, r8
-  movsxd rax, eax
+  movsxd rax, r8d
   mov QWORD PTR [rbp-100], rax
   mov r13, QWORD PTR [rbp-92]
   add r13, QWORD PTR [rbp-100]
@@ -3481,8 +3468,7 @@ _caustic_linker_elf_reader_cst_streq:
 .L54:
 .L55:
 .loc 1 200 0
-  mov rax, r8
-  movsxd rax, eax
+  movsxd rax, r8d
   mov QWORD PTR [rbp-132], rax
   mov rbx, QWORD PTR [rbp-132]
   add rbx, 1
@@ -3823,8 +3809,7 @@ _caustic_linker_elf_reader_cst_cstrlen:
 .loc 1 238 0
   mov r13, r12
 .L70:
-  mov r12, r13
-  movsxd r12, r12d
+  movsxd r12, r13d
   mov r14, rbx
   add r14, r12
   mov r8, r14
@@ -3833,8 +3818,7 @@ _caustic_linker_elf_reader_cst_cstrlen:
   test rax, rax
   je .L71
 .loc 1 240 0
-  mov r10, r13
-  movsxd r10, r10d
+  movsxd r10, r13d
   mov rsi, r10
   add rsi, 1
   mov r13, rsi
@@ -3842,8 +3826,7 @@ _caustic_linker_elf_reader_cst_cstrlen:
   jmp .L70
 .L71:
 .loc 1 241 0
-  mov rbx, r13
-  movsxd rbx, ebx
+  movsxd rbx, r13d
 .loc 1 240 0
   mov rax, rbx
   add rsp, 68
@@ -3880,8 +3863,7 @@ _caustic_linker_elf_reader_cst_sym_get:
   mov rbx, QWORD PTR [rbx]
   mov r13, rbx
 .loc 1 274 0
-  mov rbx, r12
-  movsxd rbx, ebx
+  movsxd rbx, r12d
   mov r12, rbx
   mov rbx, r12
   shl rbx, 5
@@ -4056,8 +4038,7 @@ _caustic_linker_elf_reader_cst_reloc_get:
 .loc 1 294 0
   mov r13, rbx
 .loc 1 295 0
-  mov rbx, r12
-  movsxd rbx, ebx
+  movsxd rbx, r12d
   mov r12, rbx
   mov rbx, r12
   shl rbx, 5
@@ -4228,7 +4209,6 @@ _caustic_linker_elf_reader_cst_print_str:
   mov rsi, r12
   mov rdx, rbx
   call _std_linux_cst_write
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 64
@@ -4319,8 +4299,7 @@ _caustic_linker_elf_reader_cst_print_int:
 .loc 1 331 0
   lea r9, [rbp-80]
 .loc 1 334 0
-  mov r10, r12
-  movsxd r10, r10d
+  movsxd r10, r12d
 .loc 1 332 0
   mov rax, r9
   add rax, r10
@@ -4355,8 +4334,7 @@ _caustic_linker_elf_reader_cst_print_int:
   idiv rcx
   pop rdx
   mov QWORD PTR [rbp-148], rax
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-156], rax
 .loc 1 341 0
 .loc 1 340 0
@@ -4374,8 +4352,7 @@ _caustic_linker_elf_reader_cst_print_int:
   jne .L78
 .loc 1 342 0
   lea rbx, [rbp-80]
-  mov r13, r12
-  movsxd r13, r13d
+  movsxd r13, r12d
   mov r14, rbx
   add r14, r13
   mov rbx, 45
@@ -4383,8 +4360,7 @@ _caustic_linker_elf_reader_cst_print_int:
   mov rcx, r14
   mov BYTE PTR [rcx], al
 .loc 1 343 0
-  mov rbx, r12
-  movsxd rbx, ebx
+  movsxd rbx, r12d
   mov r13, rbx
   sub r13, 1
   mov rbx, r13
@@ -4394,8 +4370,7 @@ _caustic_linker_elf_reader_cst_print_int:
   mov rbx, r12
 .L79:
 .loc 1 343 0
-  mov r12, rbx
-  movsxd r12, r12d
+  movsxd r12, ebx
   mov rbx, r12
 .loc 1 344 0
 .loc 1 343 0
@@ -4423,7 +4398,6 @@ _caustic_linker_elf_reader_cst_print_int:
   mov rsi, r14
   mov rdx, r15
   call _std_linux_cst_write
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 164
@@ -4531,7 +4505,6 @@ _caustic_linker_elf_reader_cst_print_hex:
   mov rsi, rbx
   mov rdx, r13
   call _std_linux_cst_write
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 170
@@ -4702,7 +4675,6 @@ _caustic_linker_elf_reader_cst_print_error:
   mov r12, rbx
   mov rdi, r12
   call _caustic_linker_elf_reader_cst_print_str
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-64]
   mov rdi, rbx
   call _caustic_linker_elf_reader_cst_print_str
@@ -4712,7 +4684,6 @@ _caustic_linker_elf_reader_cst_print_error:
 .loc 1 390 0
   mov rdi, rbx
   call _caustic_linker_elf_reader_cst_print_str
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 64
@@ -5971,7 +5942,6 @@ _caustic_linker_elf_reader_cst_read_obj:
   mov rdi, r14
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_print_error
-  mov r14, rax
   mov r14, 1
   mov rax, r14
   add rsp, 232
@@ -6060,7 +6030,6 @@ _caustic_linker_elf_reader_cst_read_obj:
   mov rdi, r14
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_print_error
-  mov rbx, rax
   mov rbx, 1
   mov rax, rbx
   add rsp, 232
@@ -6092,7 +6061,6 @@ _caustic_linker_elf_reader_cst_read_obj:
   mov rsi, r12
   mov rdx, rbx
   call _caustic_linker_elf_reader_cst_parse_symbols
-  mov rbx, rax
   mov rbx, 0
   lea r14, [rbp-192]
   mov r8, r14
@@ -6203,7 +6171,6 @@ _caustic_linker_elf_reader_cst_read_obj:
   mov rcx, r14
   mov r8, r15
   call _caustic_linker_elf_reader_cst_parse_rela_section
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 232
@@ -6311,8 +6278,7 @@ _caustic_linker_linker_cst_gsym_get:
   mov r13, QWORD PTR [r13]
   mov rbx, r13
 .loc 1 31 0
-  mov r13, r12
-  movsxd r13, r13d
+  movsxd r13, r12d
 .loc 1 29 0
   mov r12, r13
 .loc 1 31 0
@@ -6359,8 +6325,7 @@ _caustic_linker_linker_cst_gsym_find:
   mov r15, r14
 .L154:
 .loc 1 34 0
-  mov r14, r15
-  movsxd r14, r14d
+  movsxd r14, r15d
   mov rax, rbx
   add rax, 8
   mov QWORD PTR [rbp-104], rax
@@ -6372,8 +6337,7 @@ _caustic_linker_linker_cst_gsym_find:
   xor r10, r10
 .loc 1 37 0
 .loc 1 38 0
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-120], rax
 .loc 1 36 0
   mov rdi, rbx
@@ -6406,8 +6370,7 @@ _caustic_linker_linker_cst_gsym_find:
   cmp rax, 1
   jne .L156
 .loc 1 41 0
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-184], rax
   add rsp, 200
   pop r15
@@ -6422,8 +6385,7 @@ _caustic_linker_linker_cst_gsym_find:
 .L156:
 .L157:
 .loc 1 44 0
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-192], rax
   mov r13, QWORD PTR [rbp-192]
   add r13, 1
@@ -6434,8 +6396,7 @@ _caustic_linker_linker_cst_gsym_find:
 .loc 1 45 0
   mov rbx, -1
 .loc 1 44 0
-  mov r12, rbx
-  movsxd r12, r12d
+  movsxd r12, ebx
   mov rax, r12
   add rsp, 200
   pop r15
@@ -6504,8 +6465,7 @@ _caustic_linker_linker_cst_gsym_add:
 .loc 1 51 0
   xor r10, r10
 .loc 1 53 0
-  mov r8, r15
-  movsxd r8, r8d
+  movsxd r8, r15d
 .loc 1 52 0
   mov r9, r8
 .loc 1 53 0
@@ -6547,8 +6507,7 @@ _caustic_linker_linker_cst_gsym_add:
   mov r12, rbx
   add r12, 12
 .loc 1 57 0
-  mov r13, r15
-  movsxd r13, r13d
+  movsxd r13, r15d
 .loc 1 56 0
   mov rax, r13
   mov rcx, r12
@@ -7259,8 +7218,7 @@ _caustic_linker_linker_cst_get_obj:
   mov rbx, QWORD PTR [rbx]
   mov r13, rbx
 .loc 1 172 0
-  mov rbx, r12
-  movsxd rbx, ebx
+  movsxd rbx, r12d
   mov r12, rbx
   shl r12, 3
   mov rbx, r13
@@ -7300,7 +7258,6 @@ _caustic_linker_linker_cst_emit_start_stub:
   mov rdi, r12
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_buf_emit8
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
 .loc 1 176 0
   mov r12, 49
@@ -7452,7 +7409,6 @@ _caustic_linker_linker_cst_emit_start_stub:
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit8
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, 0
   mov rdi, rbx
@@ -7465,7 +7421,6 @@ _caustic_linker_linker_cst_emit_start_stub:
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit8
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
 .loc 1 201 0
   mov r12, 15
@@ -7481,7 +7436,6 @@ _caustic_linker_linker_cst_emit_start_stub:
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit8
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 64
@@ -7529,8 +7483,7 @@ _caustic_linker_linker_cst_merge_sections:
   mov r8, 0
   mov r15, r8
 .L160:
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-108], rax
   mov rax, rbx
   add rax, 112
@@ -7542,8 +7495,7 @@ _caustic_linker_linker_cst_merge_sections:
   jge .L161
   xor r10, r10
 .loc 1 215 0
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-140], rax
   mov rdi, rbx
   mov rsi, QWORD PTR [rbp-140]
@@ -7726,8 +7678,7 @@ _caustic_linker_linker_cst_merge_sections:
   mov rcx, QWORD PTR [rbp-492]
   mov QWORD PTR [rcx], rax
 .loc 1 242 0
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-540], rax
   mov r13, QWORD PTR [rbp-540]
   add r13, 1
@@ -7928,8 +7879,7 @@ _caustic_linker_linker_cst_resolve_sym_vaddr:
 .loc 1 1874 0
   mov r14, rcx
 .loc 1 271 0
-  mov r8, r13
-  movsxd r8, r8d
+  movsxd r8, r13d
   lea r9, [rip+_caustic_linker_elf_reader_cst_SECIDX_TEXT]
   mov r10, r9
   movsxd r10, DWORD PTR [r10]
@@ -7962,8 +7912,7 @@ _caustic_linker_linker_cst_resolve_sym_vaddr:
 .L170:
 .L171:
 .loc 1 275 0
-  mov r8, r13
-  movsxd r8, r8d
+  movsxd r8, r13d
   lea r9, [rip+_caustic_linker_elf_reader_cst_SECIDX_DATA]
   mov r10, r9
   movsxd r10, DWORD PTR [r10]
@@ -7998,8 +7947,7 @@ _caustic_linker_linker_cst_resolve_sym_vaddr:
 .L172:
 .L173:
 .loc 1 279 0
-  mov r8, r13
-  movsxd r8, r8d
+  movsxd r8, r13d
   lea r9, [rip+_caustic_linker_elf_reader_cst_SECIDX_RODATA]
   mov r10, r9
   movsxd r10, DWORD PTR [r10]
@@ -8034,8 +7982,7 @@ _caustic_linker_linker_cst_resolve_sym_vaddr:
 .L174:
 .L175:
 .loc 1 283 0
-  mov r8, r13
-  movsxd r8, r8d
+  movsxd r8, r13d
   lea r13, [rip+_caustic_linker_elf_reader_cst_SECIDX_BSS]
   mov r9, r13
   movsxd r9, DWORD PTR [r9]
@@ -8112,8 +8059,7 @@ _caustic_linker_linker_cst_build_symtab:
   mov r15, r14
 .L178:
 .loc 1 291 0
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-232], rax
 .loc 1 292 0
   mov rax, rbx
@@ -8128,8 +8074,7 @@ _caustic_linker_linker_cst_build_symtab:
 .loc 1 292 0
   xor r10, r10
 .loc 1 293 0
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-224], rax
 .loc 1 292 0
   mov rdi, rbx
@@ -8141,8 +8086,7 @@ _caustic_linker_linker_cst_build_symtab:
   mov r12, QWORD PTR [rbp-240]
 .L180:
 .loc 1 295 0
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-248], rax
   mov rax, QWORD PTR [rbp-288]
   add rax, 112
@@ -8156,8 +8100,7 @@ _caustic_linker_linker_cst_build_symtab:
 .loc 1 295 0
   xor r10, r10
 .loc 1 296 0
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-280], rax
 .loc 1 295 0
   mov rdi, QWORD PTR [rbp-288]
@@ -8165,8 +8108,7 @@ _caustic_linker_linker_cst_build_symtab:
   call _caustic_linker_elf_reader_cst_sym_get
   mov r14, rax
 .loc 1 296 0
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-304], rax
 .loc 1 298 0
 .loc 1 296 0
@@ -8360,8 +8302,7 @@ _caustic_linker_linker_cst_build_symtab:
   add rax, 24
   mov QWORD PTR [rbp-704], rax
 .loc 1 318 0
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-712], rax
 .loc 1 317 0
   mov rcx, QWORD PTR [rbp-704]
@@ -8396,8 +8337,7 @@ _caustic_linker_linker_cst_build_symtab:
   mov QWORD PTR [rbp-768], rax
 .loc 1 323 0
 .loc 1 324 0
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-776], rax
 .loc 1 325 0
   mov QWORD PTR [rbp-784], 1
@@ -8490,8 +8430,7 @@ _caustic_linker_linker_cst_build_symtab:
   mov QWORD PTR [rbp-944], 0
 .loc 1 342 0
   mov QWORD PTR [rbp-952], 0
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-960], rax
   mov QWORD PTR [rbp-968], 0
 .loc 1 340 0
@@ -8518,8 +8457,7 @@ _caustic_linker_linker_cst_build_symtab:
 .L187:
 .L183:
 .loc 1 343 0
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-984], rax
   add rax, 1
   mov QWORD PTR [rbp-992], rax
@@ -8528,8 +8466,7 @@ _caustic_linker_linker_cst_build_symtab:
   jmp .L180
 .L181:
 .loc 1 343 0
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-1000], rax
   add rax, 1
   mov QWORD PTR [rbp-1008], rax
@@ -8544,8 +8481,7 @@ _caustic_linker_linker_cst_build_symtab:
   mov r14, r12
 .L202:
 .loc 1 344 0
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-1024], rax
   mov rax, r13
   add rax, 8
@@ -8557,8 +8493,7 @@ _caustic_linker_linker_cst_build_symtab:
   jge .L203
   xor r10, r10
 .loc 1 346 0
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-1048], rax
 .loc 1 345 0
   mov rdi, r13
@@ -8629,8 +8564,7 @@ _caustic_linker_linker_cst_build_symtab:
 .L204:
 .L205:
 .loc 1 355 0
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-1208], rax
   mov r15, QWORD PTR [rbp-1208]
   add r15, 1
@@ -8656,8 +8590,7 @@ _caustic_linker_linker_cst_build_symtab:
   add r14, 116
   mov r15, r14
   mov r15, QWORD PTR [r15]
-  mov r14, r12
-  movsxd r14, r14d
+  movsxd r14, r12d
 .loc 1 357 0
   mov rdi, r13
   mov rsi, r15
@@ -8666,8 +8599,7 @@ _caustic_linker_linker_cst_build_symtab:
   mov r12, rax
 .loc 1 356 0
 .loc 1 360 0
-  mov r14, r12
-  movsxd r14, r14d
+  movsxd r14, r12d
 .loc 1 361 0
 .loc 1 360 0
   mov rax, r14
@@ -8709,8 +8641,7 @@ _caustic_linker_linker_cst_build_symtab:
 .L209:
 .loc 1 369 0
   xor r10, r10
-  mov r14, r12
-  movsxd r14, r14d
+  movsxd r14, r12d
   mov rdi, r13
   mov rsi, r14
   call _caustic_linker_linker_cst_gsym_get
@@ -8924,13 +8855,11 @@ _caustic_linker_linker_cst_resolve_reloc_sym:
 .loc 1 2736 0
   mov r13, rdx
 .loc 1 396 0
-  mov r14, r13
-  movsxd r14, r14d
+  movsxd r14, r13d
   mov rax, r14
   test rax, rax
   jl .L214
-  mov r14, r13
-  movsxd r14, r14d
+  movsxd r14, r13d
   mov r8, r12
   add r8, 112
   mov r9, r8
@@ -8964,8 +8893,7 @@ _caustic_linker_linker_cst_resolve_reloc_sym:
 .loc 1 398 0
   xor r10, r10
 .loc 1 399 0
-  mov r14, r13
-  movsxd r14, r14d
+  movsxd r14, r13d
   mov rdi, r12
   mov rsi, r14
   call _caustic_linker_elf_reader_cst_sym_get
@@ -9299,8 +9227,7 @@ _caustic_linker_linker_cst_resolve_reloc_sym:
   mov r12, rax
 .loc 1 436 0
 .loc 1 440 0
-  mov r13, r12
-  movsxd r13, r13d
+  movsxd r13, r12d
   mov rax, r13
   test rax, rax
   jl .L234
@@ -9308,8 +9235,7 @@ _caustic_linker_linker_cst_resolve_reloc_sym:
 .loc 1 440 0
   xor r10, r10
 .loc 1 442 0
-  mov r13, r12
-  movsxd r13, r13d
+  movsxd r13, r12d
   mov rdi, rbx
   mov rsi, r13
   call _caustic_linker_linker_cst_gsym_get
@@ -9965,7 +9891,6 @@ _caustic_linker_linker_cst_write_map:
   mov rsi, r12
   mov rdx, r13
   call _std_mem_cst_memcpy
-  mov r12, rax
   mov r12, r14
   add r12, r13
   mov r8, 46
@@ -10046,7 +9971,6 @@ _caustic_linker_linker_cst_write_map:
   mov rsi, r13
   mov rdx, r15
   call _std_linux_cst_write
-  mov r13, rax
   mov r13, QWORD PTR [rbp-120]
   add r13, 40
   mov r15, r13
@@ -10066,8 +9990,7 @@ _caustic_linker_linker_cst_write_map:
   mov r13, 0
   mov r15, r13
 .L260:
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-128], rax
   mov rax, QWORD PTR [rbp-168]
   add rax, 8
@@ -10078,8 +10001,7 @@ _caustic_linker_linker_cst_write_map:
   cmp rax, QWORD PTR [rbp-144]
   jge .L261
   xor r10, r10
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-160], rax
   mov rdi, QWORD PTR [rbp-168]
   mov rsi, QWORD PTR [rbp-160]
@@ -10176,8 +10098,7 @@ _caustic_linker_linker_cst_write_map:
 .L262:
   mov QWORD PTR [rbp-408], rbx
 .L263:
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-392], rax
   add rax, 1
   mov QWORD PTR [rbp-400], rax
@@ -10190,7 +10111,6 @@ _caustic_linker_linker_cst_write_map:
   mov rbx, rax
   mov rdi, r14
   call _std_mem_cst_gfree
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 440
@@ -10269,7 +10189,6 @@ _caustic_linker_linker_cst_write_hex_to_fd:
   mov rsi, rbx
   mov rdx, r12
   call _std_linux_cst_write
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 186
@@ -10308,7 +10227,6 @@ _caustic_linker_linker_cst_write_map_entry:
   mov rdi, r13
   mov rsi, rbx
   call _caustic_linker_linker_cst_write_hex_to_fd
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   lea r12, [rip+.LC35]
   mov r13, 2
@@ -10329,7 +10247,6 @@ _caustic_linker_linker_cst_write_map_entry:
   mov rsi, r12
   mov rdx, r13
   call _std_linux_cst_write
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   lea r12, [rip+.LC36]
   mov r13, 5
@@ -10337,7 +10254,6 @@ _caustic_linker_linker_cst_write_map_entry:
   mov rsi, r12
   mov rdx, r13
   call _std_linux_cst_write
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, QWORD PTR [rbp-76]
   mov r13, r12
@@ -10348,7 +10264,6 @@ _caustic_linker_linker_cst_write_map_entry:
   mov rsi, r12
   mov rdx, r13
   call _std_linux_cst_write
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   lea r12, [rip+.LC37]
   mov r13, 1
@@ -10356,7 +10271,6 @@ _caustic_linker_linker_cst_write_map_entry:
   mov rsi, r12
   mov rdx, r13
   call _std_linux_cst_write
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 85
@@ -10442,8 +10356,7 @@ _caustic_linker_linker_cst_dynsym_get:
   mov r13, rbx
   mov r13, QWORD PTR [r13]
   mov rbx, r13
-  mov r13, r12
-  movsxd r13, r13d
+  movsxd r13, r12d
   mov r12, r13
   mov r13, r12
   mov rcx, 48
@@ -10499,8 +10412,7 @@ _caustic_linker_linker_cst_dynsym_add:
   mov r14, r8
   shl r14, 1
   xor r10, r10
-  mov r8, r14
-  movsxd r8, r8d
+  movsxd r8, r14d
   mov r9, r8
   mov r15, r9
   mov rcx, 48
@@ -10522,7 +10434,6 @@ _caustic_linker_linker_cst_dynsym_add:
   mov rsi, r13
   mov rdx, r12
   call _std_mem_cst_memcpy
-  mov r12, rax
   mov r12, rbx
   mov r12, QWORD PTR [r12]
   mov rdi, r12
@@ -10533,8 +10444,7 @@ _caustic_linker_linker_cst_dynsym_add:
   mov QWORD PTR [rcx], rax
   mov r12, rbx
   add r12, 12
-  mov r13, r14
-  movsxd r13, r13d
+  movsxd r13, r14d
   mov rax, r13
   mov rcx, r12
   mov DWORD PTR [rcx], eax
@@ -10650,8 +10560,7 @@ _caustic_linker_linker_cst_dynsym_find:
   mov r14, 0
   mov r15, r14
 .L274:
-  mov r14, r15
-  movsxd r14, r14d
+  movsxd r14, r15d
   mov rax, rbx
   add rax, 8
   mov QWORD PTR [rbp-104], rax
@@ -10661,8 +10570,7 @@ _caustic_linker_linker_cst_dynsym_find:
   cmp rax, QWORD PTR [rbp-128]
   jge .L275
   xor r10, r10
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-120], rax
   mov rdi, rbx
   mov rsi, QWORD PTR [rbp-120]
@@ -10687,8 +10595,7 @@ _caustic_linker_linker_cst_dynsym_find:
   mov QWORD PTR [rbp-168], rax
   cmp rax, 1
   jne .L276
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-184], rax
   add rsp, 200
   pop r15
@@ -10701,8 +10608,7 @@ _caustic_linker_linker_cst_dynsym_find:
   jmp .L277
 .L276:
 .L277:
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-192], rax
   mov r13, QWORD PTR [rbp-192]
   add r13, 1
@@ -10710,8 +10616,7 @@ _caustic_linker_linker_cst_dynsym_find:
   jmp .L274
 .L275:
   mov rbx, -1
-  mov r12, rbx
-  movsxd r12, r12d
+  movsxd r12, ebx
   mov rax, r12
   add rsp, 200
   pop r15
@@ -10821,8 +10726,7 @@ _caustic_linker_linker_cst_collect_dynamic_syms:
   mov r14, 0
   mov r15, r14
 .L278:
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-160], rax
   mov rax, r12
   add rax, 8
@@ -10833,8 +10737,7 @@ _caustic_linker_linker_cst_collect_dynamic_syms:
   cmp rax, QWORD PTR [rbp-176]
   jge .L279
   xor r10, r10
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-192], rax
   mov rdi, r12
   mov rsi, QWORD PTR [rbp-192]
@@ -10901,8 +10804,7 @@ _caustic_linker_linker_cst_collect_dynamic_syms:
   jmp .L281
 .L280:
 .L281:
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-376], rax
   mov rbx, QWORD PTR [rbp-376]
   add rbx, 1
@@ -10912,8 +10814,7 @@ _caustic_linker_linker_cst_collect_dynamic_syms:
   mov rbx, 0
   mov r12, rbx
 .L284:
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-384], rax
   mov rax, QWORD PTR [rbp-200]
   add rax, 112
@@ -10924,8 +10825,7 @@ _caustic_linker_linker_cst_collect_dynamic_syms:
   cmp rax, QWORD PTR [rbp-464]
   jge .L285
   xor r10, r10
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-400], rax
   mov rdi, QWORD PTR [rbp-200]
   mov rsi, QWORD PTR [rbp-400]
@@ -10934,8 +10834,7 @@ _caustic_linker_linker_cst_collect_dynamic_syms:
   mov QWORD PTR [rbp-416], 0
   mov r14, QWORD PTR [rbp-416]
 .L286:
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-424], rax
   mov rax, rbx
   add rax, 124
@@ -10946,8 +10845,7 @@ _caustic_linker_linker_cst_collect_dynamic_syms:
   cmp rax, QWORD PTR [rbp-440]
   jge .L287
   xor r10, r10
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-456], rax
   mov rdi, rbx
   mov rsi, QWORD PTR [rbp-456]
@@ -11022,16 +10920,14 @@ _caustic_linker_linker_cst_collect_dynamic_syms:
   jmp .L289
 .L288:
 .L289:
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-640], rax
   add rax, 1
   mov QWORD PTR [rbp-648], rax
   mov r14, QWORD PTR [rbp-648]
   jmp .L286
 .L287:
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-656], rax
   add rax, 1
   mov QWORD PTR [rbp-664], rax
@@ -11067,8 +10963,7 @@ _caustic_linker_linker_cst_elf_hash:
   mov r8, r14
   mov r14, r13
 .L294:
-  mov rax, r8
-  movsxd rax, eax
+  movsxd rax, r8d
   mov QWORD PTR [rbp-152], rax
   mov r9, QWORD PTR [rbp-96]
   movsxd r9, r9d
@@ -11078,8 +10973,7 @@ _caustic_linker_linker_cst_elf_hash:
   mov rsi, r14
   mov rdi, rsi
   shl rdi, 4
-  mov r15, r8
-  movsxd r15, r15d
+  movsxd r15, r8d
   mov rax, QWORD PTR [rbp-88]
   add rax, r15
   mov QWORD PTR [rbp-104], rax
@@ -11114,8 +11008,7 @@ _caustic_linker_linker_cst_elf_hash:
   mov rax, QWORD PTR [rbp-192]
   and rax, 268435455
   mov QWORD PTR [rbp-200], rax
-  mov rax, r8
-  movsxd rax, eax
+  movsxd rax, r8d
   mov QWORD PTR [rbp-208], rax
   add rax, 1
   mov QWORD PTR [rbp-216], rax
@@ -11169,7 +11062,6 @@ _caustic_linker_linker_cst_build_interp:
   mov rsi, rbx
   mov rdx, r13
   call _caustic_linker_elf_reader_cst_buf_append
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 72
@@ -11214,8 +11106,7 @@ _caustic_linker_linker_cst_build_dynstr:
   mov r8, 0
   mov r12, r8
 .L298:
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-152], rax
   mov rax, rbx
   add rax, 156
@@ -11225,8 +11116,7 @@ _caustic_linker_linker_cst_build_dynstr:
   mov rax, QWORD PTR [rbp-152]
   cmp rax, QWORD PTR [rbp-160]
   jge .L299
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-176], rax
   shl rax, 2
   mov QWORD PTR [rbp-184], rax
@@ -11242,8 +11132,7 @@ _caustic_linker_linker_cst_build_dynstr:
   mov QWORD PTR [rbp-216], rax
   mov rcx, QWORD PTR [rbp-192]
   mov DWORD PTR [rcx], eax
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-224], rax
   shl rax, 3
   mov QWORD PTR [rbp-232], rax
@@ -11267,8 +11156,7 @@ _caustic_linker_linker_cst_build_dynstr:
   mov rsi, QWORD PTR [rbp-280]
   call _caustic_linker_elf_reader_cst_buf_emit8
   mov QWORD PTR [rbp-288], rax
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-296], rax
   mov r15, QWORD PTR [rbp-296]
   add r15, 1
@@ -11278,8 +11166,7 @@ _caustic_linker_linker_cst_build_dynstr:
   mov rbx, 0
   mov r12, rbx
 .L300:
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-304], rax
   mov rax, QWORD PTR [rbp-136]
   add rax, 8
@@ -11290,8 +11177,7 @@ _caustic_linker_linker_cst_build_dynstr:
   cmp rax, r15
   jge .L301
   xor r10, r10
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-320], rax
   mov rdi, QWORD PTR [rbp-136]
   mov rsi, QWORD PTR [rbp-320]
@@ -11328,8 +11214,7 @@ _caustic_linker_linker_cst_build_dynstr:
   mov rsi, QWORD PTR [rbp-408]
   call _caustic_linker_elf_reader_cst_buf_emit8
   mov QWORD PTR [rbp-416], rax
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-424], rax
   mov r13, QWORD PTR [rbp-424]
   add r13, 1
@@ -11369,8 +11254,7 @@ _caustic_linker_linker_cst_build_dynsym_entries:
   mov rbx, 0
   mov r14, rbx
 .L302:
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-104], rax
   cmp rax, 24
   jge .L303
@@ -11379,8 +11263,7 @@ _caustic_linker_linker_cst_build_dynsym_entries:
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit8
   mov QWORD PTR [rbp-112], rax
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-120], rax
   mov rbx, QWORD PTR [rbp-120]
   add rbx, 1
@@ -11390,8 +11273,7 @@ _caustic_linker_linker_cst_build_dynsym_entries:
   mov rbx, 0
   mov r12, rbx
 .L304:
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-128], rax
   mov rax, QWORD PTR [rbp-96]
   add rax, 8
@@ -11402,8 +11284,7 @@ _caustic_linker_linker_cst_build_dynsym_entries:
   cmp rax, r15
   jge .L305
   xor r10, r10
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-144], rax
   mov rdi, QWORD PTR [rbp-96]
   mov rsi, QWORD PTR [rbp-144]
@@ -11412,8 +11293,7 @@ _caustic_linker_linker_cst_build_dynsym_entries:
   mov rax, rbx
   add rax, 40
   mov QWORD PTR [rbp-160], rax
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-168], rax
   add rax, 1
   mov QWORD PTR [rbp-176], rax
@@ -11469,8 +11349,7 @@ _caustic_linker_linker_cst_build_dynsym_entries:
   mov rsi, QWORD PTR [rbp-320]
   call _caustic_linker_elf_reader_cst_buf_emit64_le
   mov QWORD PTR [rbp-328], rax
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-336], rax
   mov r14, QWORD PTR [rbp-336]
   add r14, 1
@@ -11606,8 +11485,7 @@ _caustic_linker_linker_cst_build_hash_section:
   mov QWORD PTR [rbp-196], rax
   mov rbx, QWORD PTR [rbp-180]
   movsxd rbx, ebx
-  mov r8, rbx
-  movsxd r8, r8d
+  movsxd r8, ebx
   mov rax, r8
   cmp rax, 1
   jge .L308
@@ -11623,19 +11501,16 @@ _caustic_linker_linker_cst_build_hash_section:
   mov rdi, r13
   mov rsi, r14
   call _caustic_linker_elf_reader_cst_buf_emit32_le
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-196]
   movsxd rbx, ebx
   mov r14, rbx
   mov rdi, r13
   mov rsi, r14
   call _caustic_linker_elf_reader_cst_buf_emit32_le
-  mov rbx, rax
   mov rbx, 0
   mov r14, rbx
 .L310:
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-204], rax
   mov r12, QWORD PTR [rbp-188]
   movsxd r12, r12d
@@ -11647,8 +11522,7 @@ _caustic_linker_linker_cst_build_hash_section:
   mov rsi, QWORD PTR [rbp-212]
   call _caustic_linker_elf_reader_cst_buf_emit32_le
   mov QWORD PTR [rbp-220], rax
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-228], rax
   mov rbx, QWORD PTR [rbp-228]
   add rbx, 1
@@ -11658,8 +11532,7 @@ _caustic_linker_linker_cst_build_hash_section:
   mov rbx, 0
   mov r12, rbx
 .L312:
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-236], rax
   mov r14, QWORD PTR [rbp-196]
   movsxd r14, r14d
@@ -11671,8 +11544,7 @@ _caustic_linker_linker_cst_build_hash_section:
   mov rsi, QWORD PTR [rbp-244]
   call _caustic_linker_elf_reader_cst_buf_emit32_le
   mov QWORD PTR [rbp-252], rax
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-260], rax
   mov rbx, QWORD PTR [rbp-260]
   add rbx, 1
@@ -11684,8 +11556,7 @@ _caustic_linker_linker_cst_build_hash_section:
   mov r12, 0
   mov r13, r12
 .L314:
-  mov rax, r13
-  movsxd rax, eax
+  movsxd rax, r13d
   mov QWORD PTR [rbp-268], rax
   mov rax, QWORD PTR [rbp-180]
   movsxd rax, eax
@@ -11694,8 +11565,7 @@ _caustic_linker_linker_cst_build_hash_section:
   cmp rax, QWORD PTR [rbp-284]
   jge .L315
   xor r10, r10
-  mov rax, r13
-  movsxd rax, eax
+  movsxd rax, r13d
   mov QWORD PTR [rbp-276], rax
   mov rdi, QWORD PTR [rbp-172]
   mov rsi, QWORD PTR [rbp-276]
@@ -11727,8 +11597,7 @@ _caustic_linker_linker_cst_build_hash_section:
   mov QWORD PTR [rbp-340], rax
   movsxd rax, eax
   mov QWORD PTR [rbp-348], rax
-  mov rax, r13
-  movsxd rax, eax
+  movsxd rax, r13d
   mov QWORD PTR [rbp-356], rax
   add rax, 1
   mov QWORD PTR [rbp-740], rax
@@ -11850,8 +11719,7 @@ _caustic_linker_linker_cst_build_hash_section:
   mov rax, QWORD PTR [rbp-716]
   mov QWORD PTR [rbp-708], rax
 .L317:
-  mov rax, r13
-  movsxd rax, eax
+  movsxd rax, r13d
   mov QWORD PTR [rbp-692], rax
   add rax, 1
   mov QWORD PTR [rbp-700], rax
@@ -11894,8 +11762,7 @@ _caustic_linker_linker_cst_build_rela_plt_entries:
   mov rbx, 0
   mov r14, rbx
 .L320:
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-100], rax
   mov rax, r12
   add rax, 8
@@ -11906,8 +11773,7 @@ _caustic_linker_linker_cst_build_rela_plt_entries:
   cmp rax, QWORD PTR [rbp-108]
   jge .L321
   xor r10, r10
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-124], rax
   mov rdi, r12
   mov rsi, QWORD PTR [rbp-124]
@@ -11951,8 +11817,7 @@ _caustic_linker_linker_cst_build_rela_plt_entries:
   jmp .L323
 .L322:
 .L323:
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-252], rax
   mov r15, QWORD PTR [rbp-252]
   add r15, 1
@@ -12016,8 +11881,7 @@ _caustic_linker_linker_cst_build_dynamic_section:
   mov r8, 0
   mov r15, r8
 .L324:
-  mov r13, r15
-  movsxd r13, r13d
+  movsxd r13, r15d
   mov r12, QWORD PTR [rbp-224]
   add r12, 156
   mov rax, r12
@@ -12031,8 +11895,7 @@ _caustic_linker_linker_cst_build_dynamic_section:
   mov rsi, QWORD PTR [rbp-248]
   call _caustic_linker_elf_reader_cst_buf_emit64_le
   mov QWORD PTR [rbp-256], rax
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-264], rax
   shl rax, 2
   mov QWORD PTR [rbp-272], rax
@@ -12046,8 +11909,7 @@ _caustic_linker_linker_cst_build_dynamic_section:
   mov rsi, QWORD PTR [rbp-296]
   call _caustic_linker_elf_reader_cst_buf_emit64_le
   mov QWORD PTR [rbp-304], rax
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-312], rax
   mov rbx, QWORD PTR [rbp-312]
   add rbx, 1
@@ -12062,7 +11924,6 @@ _caustic_linker_linker_cst_build_dynamic_section:
   mov rdi, r14
   mov rsi, QWORD PTR [rbp-208]
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 5
   mov rdi, r14
   mov rsi, rbx
@@ -12071,7 +11932,6 @@ _caustic_linker_linker_cst_build_dynamic_section:
   mov rdi, r14
   mov rsi, QWORD PTR [rbp-184]
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 6
   mov rdi, r14
   mov rsi, rbx
@@ -12080,12 +11940,10 @@ _caustic_linker_linker_cst_build_dynamic_section:
   mov rdi, r14
   mov rsi, QWORD PTR [rbp-160]
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 10
   mov rdi, r14
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-192]
   add rbx, 8
   mov r12, rbx
@@ -12093,17 +11951,14 @@ _caustic_linker_linker_cst_build_dynamic_section:
   mov rdi, r14
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 11
   mov rdi, r14
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 24
   mov rdi, r14
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 3
   mov rdi, r14
   mov rsi, rbx
@@ -12112,12 +11967,10 @@ _caustic_linker_linker_cst_build_dynamic_section:
   mov rdi, r14
   mov rsi, QWORD PTR [rbp-152]
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 2
   mov rdi, r14
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-200]
   add rbx, 8
   mov r12, rbx
@@ -12125,17 +11978,14 @@ _caustic_linker_linker_cst_build_dynamic_section:
   mov rdi, r14
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 20
   mov rdi, r14
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 7
   mov rdi, r14
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 23
   mov rdi, r14
   mov rsi, rbx
@@ -12144,12 +11994,10 @@ _caustic_linker_linker_cst_build_dynamic_section:
   mov rdi, r14
   mov rsi, QWORD PTR [rbp-168]
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 30
   mov rdi, r14
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 8
   mov rdi, r14
   mov rsi, rbx
@@ -12159,8 +12007,7 @@ _caustic_linker_linker_cst_build_dynamic_section:
   mov rdi, QWORD PTR [rbp-224]
   call _caustic_linker_linker_cst_count_data_dynsyms
   mov rbx, rax
-  mov r12, rbx
-  movsxd r12, r12d
+  movsxd r12, ebx
   mov rax, r12
   test rax, rax
   jle .L326
@@ -12172,14 +12019,11 @@ _caustic_linker_linker_cst_build_dynamic_section:
   mov rdi, r14
   mov rsi, QWORD PTR [rbp-176]
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov r12, rax
   mov r12, 8
   mov rdi, r14
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov r12, rax
-  mov r12, rbx
-  movsxd r12, r12d
+  movsxd r12, ebx
   mov rbx, r12
   mov r12, rbx
   mov rcx, 24
@@ -12187,12 +12031,10 @@ _caustic_linker_linker_cst_build_dynamic_section:
   mov rdi, r14
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 9
   mov rdi, r14
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 24
   mov rdi, r14
   mov rsi, rbx
@@ -12205,12 +12047,10 @@ _caustic_linker_linker_cst_build_dynamic_section:
   mov rdi, r14
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 0
   mov rdi, r14
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 312
@@ -12273,21 +12113,17 @@ _caustic_linker_linker_cst_build_dynamic_metadata:
   mov r12, rbx
   mov rdi, r12
   call _caustic_linker_linker_cst_build_interp
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   lea r12, [rbp-256]
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_linker_cst_build_dynstr
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov rdi, rbx
   call _caustic_linker_linker_cst_build_dynsym_entries
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov rdi, rbx
   call _caustic_linker_linker_cst_build_hash_section
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov rdi, rbx
   call _caustic_linker_linker_cst_build_rela_plt_entries
@@ -12369,19 +12205,16 @@ _caustic_linker_linker_cst_emit_plt0_stub:
   mov rdi, r12
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_buf_emit8
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, 53
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit8
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, QWORD PTR [rbp-96]
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit32_le
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-88]
   mov r12, QWORD PTR [rbp-64]
   mov r13, r12
@@ -12395,43 +12228,36 @@ _caustic_linker_linker_cst_emit_plt0_stub:
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit8
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, 37
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit8
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, QWORD PTR [rbp-104]
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit32_le
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, 15
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit8
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, 31
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit8
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, 64
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit8
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, 0
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit8
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 112
@@ -12516,7 +12342,6 @@ _caustic_linker_linker_cst_emit_plt_entry:
   mov rdi, rbx
   mov rsi, r13
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-108]
   mov r12, QWORD PTR [rbp-100]
   mov r13, r12
@@ -12530,32 +12355,27 @@ _caustic_linker_linker_cst_emit_plt_entry:
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit8
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, 37
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit8
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, QWORD PTR [rbp-116]
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit32_le
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, 104
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit8
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   movsxd r12, DWORD PTR [rbp-92]
   mov r13, r12
   mov rdi, rbx
   mov rsi, r13
   call _caustic_linker_elf_reader_cst_buf_emit32_le
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-100]
   mov r12, rbx
   add r12, 16
@@ -12566,7 +12386,6 @@ _caustic_linker_linker_cst_emit_plt_entry:
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit8
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, QWORD PTR [rbp-80]
   mov r13, QWORD PTR [rbp-124]
@@ -12575,7 +12394,6 @@ _caustic_linker_linker_cst_emit_plt_entry:
   mov rdi, rbx
   mov rsi, r14
   call _caustic_linker_elf_reader_cst_buf_emit32_le
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 132
@@ -12619,12 +12437,10 @@ _caustic_linker_linker_cst_build_plt_got:
   mov rdi, r12
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 0
   mov rdi, r12
   mov rsi, rbx
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 0
   mov rdi, r12
   mov rsi, rbx
@@ -12634,14 +12450,12 @@ _caustic_linker_linker_cst_build_plt_got:
   mov rsi, QWORD PTR [rbp-120]
   mov rdx, QWORD PTR [rbp-128]
   call _caustic_linker_linker_cst_emit_plt0_stub
-  mov rbx, rax
   mov rbx, 0
   mov r8, 0
   mov r13, r8
   mov r14, rbx
 .L328:
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-144], rax
   mov rax, QWORD PTR [rbp-136]
   add rax, 8
@@ -12652,8 +12466,7 @@ _caustic_linker_linker_cst_build_plt_got:
   cmp rax, QWORD PTR [rbp-160]
   jge .L329
   xor r10, r10
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-176], rax
   mov rdi, QWORD PTR [rbp-136]
   mov rsi, QWORD PTR [rbp-176]
@@ -12666,8 +12479,7 @@ _caustic_linker_linker_cst_build_plt_got:
   mov QWORD PTR [rbp-200], rax
   test rax, rax
   jne .L330
-  mov rax, r13
-  movsxd rax, eax
+  movsxd rax, r13d
   mov QWORD PTR [rbp-216], rax
   mov rdi, QWORD PTR [rbp-184]
   mov rsi, r12
@@ -12677,8 +12489,7 @@ _caustic_linker_linker_cst_build_plt_got:
   mov r9, QWORD PTR [rbp-216]
   call _caustic_linker_linker_cst_emit_plt_entry
   mov QWORD PTR [rbp-224], rax
-  mov rax, r13
-  movsxd rax, eax
+  movsxd rax, r13d
   mov QWORD PTR [rbp-232], rax
   add rax, 1
   mov QWORD PTR [rbp-240], rax
@@ -12687,8 +12498,7 @@ _caustic_linker_linker_cst_build_plt_got:
 .L330:
   mov r15, r13
 .L331:
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-248], rax
   add rax, 1
   mov QWORD PTR [rbp-256], rax
@@ -12891,15 +12701,13 @@ _caustic_linker_linker_cst_is_dynamic_sym:
   call _caustic_linker_linker_cst_get_dynsyms
   mov rbx, rax
   xor r10, r10
-  mov r14, r13
-  movsxd r14, r14d
+  movsxd r14, r13d
   mov rdi, rbx
   mov rsi, r12
   mov rdx, r14
   call _caustic_linker_linker_cst_dynsym_find
   mov rbx, rax
-  mov r12, rbx
-  movsxd r12, r12d
+  movsxd r12, ebx
   mov rax, r12
   test rax, rax
   jl .L336
@@ -12952,21 +12760,18 @@ _caustic_linker_linker_cst_get_plt_vaddr:
   call _caustic_linker_linker_cst_get_dynsyms
   mov rbx, rax
   xor r10, r10
-  mov r14, r13
-  movsxd r14, r14d
+  movsxd r14, r13d
   mov rdi, rbx
   mov rsi, r12
   mov rdx, r14
   call _caustic_linker_linker_cst_dynsym_find
   mov r12, rax
-  mov r13, r12
-  movsxd r13, r13d
+  movsxd r13, r12d
   mov rax, r13
   test rax, rax
   jl .L338
   xor r10, r10
-  mov r13, r12
-  movsxd r13, r13d
+  movsxd r13, r12d
   mov rdi, rbx
   mov rsi, r13
   call _caustic_linker_linker_cst_dynsym_get
@@ -13023,21 +12828,18 @@ _caustic_linker_linker_cst_get_data_got_vaddr:
   call _caustic_linker_linker_cst_get_dynsyms
   mov rbx, rax
   xor r10, r10
-  mov r14, r13
-  movsxd r14, r14d
+  movsxd r14, r13d
   mov rdi, rbx
   mov rsi, r12
   mov rdx, r14
   call _caustic_linker_linker_cst_dynsym_find
   mov r12, rax
-  mov r13, r12
-  movsxd r13, r13d
+  movsxd r13, r12d
   mov rax, r13
   test rax, rax
   jl .L340
   xor r10, r10
-  mov r13, r12
-  movsxd r13, r13d
+  movsxd r13, r12d
   mov rdi, rbx
   mov rsi, r13
   call _caustic_linker_linker_cst_dynsym_get
@@ -13095,8 +12897,7 @@ _caustic_linker_linker_cst_count_data_dynsyms:
   mov r14, r13
   mov r13, r12
 .L342:
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-88], rax
   mov r15, rbx
   add r15, 8
@@ -13107,8 +12908,7 @@ _caustic_linker_linker_cst_count_data_dynsyms:
   cmp rax, QWORD PTR [rbp-96]
   jge .L343
   xor r10, r10
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-112], rax
   mov rdi, rbx
   mov rsi, QWORD PTR [rbp-112]
@@ -13120,8 +12920,7 @@ _caustic_linker_linker_cst_count_data_dynsyms:
   mov QWORD PTR [rbp-136], rax
   cmp rax, 1
   jne .L344
-  mov rax, r13
-  movsxd rax, eax
+  movsxd rax, r13d
   mov QWORD PTR [rbp-152], rax
   add rax, 1
   mov QWORD PTR [rbp-160], rax
@@ -13130,8 +12929,7 @@ _caustic_linker_linker_cst_count_data_dynsyms:
 .L344:
   mov r12, r13
 .L345:
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-168], rax
   add rax, 1
   mov QWORD PTR [rbp-176], rax
@@ -13139,8 +12937,7 @@ _caustic_linker_linker_cst_count_data_dynsyms:
   mov r14, QWORD PTR [rbp-176]
   jmp .L342
 .L343:
-  mov rbx, r13
-  movsxd rbx, ebx
+  movsxd rbx, r13d
   mov rax, rbx
   add rsp, 184
   pop r15
@@ -13180,8 +12977,7 @@ _caustic_linker_linker_cst_count_func_dynsyms:
   mov r14, r13
   mov r13, r12
 .L346:
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-88], rax
   mov r15, rbx
   add r15, 8
@@ -13192,8 +12988,7 @@ _caustic_linker_linker_cst_count_func_dynsyms:
   cmp rax, QWORD PTR [rbp-96]
   jge .L347
   xor r10, r10
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-112], rax
   mov rdi, rbx
   mov rsi, QWORD PTR [rbp-112]
@@ -13205,8 +13000,7 @@ _caustic_linker_linker_cst_count_func_dynsyms:
   mov QWORD PTR [rbp-136], rax
   test rax, rax
   jne .L348
-  mov rax, r13
-  movsxd rax, eax
+  movsxd rax, r13d
   mov QWORD PTR [rbp-152], rax
   add rax, 1
   mov QWORD PTR [rbp-160], rax
@@ -13215,8 +13009,7 @@ _caustic_linker_linker_cst_count_func_dynsyms:
 .L348:
   mov r12, r13
 .L349:
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-168], rax
   add rax, 1
   mov QWORD PTR [rbp-176], rax
@@ -13224,8 +13017,7 @@ _caustic_linker_linker_cst_count_func_dynsyms:
   mov r14, QWORD PTR [rbp-176]
   jmp .L346
 .L347:
-  mov rbx, r13
-  movsxd rbx, ebx
+  movsxd rbx, r13d
   mov rax, rbx
   add rsp, 184
   pop r15
@@ -13273,8 +13065,7 @@ _caustic_linker_linker_cst_build_data_got:
   mov r15, r8
   mov r12, rbx
 .L350:
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-120], rax
   mov rax, r13
   add rax, 8
@@ -13285,8 +13076,7 @@ _caustic_linker_linker_cst_build_data_got:
   cmp rax, QWORD PTR [rbp-128]
   jge .L351
   xor r10, r10
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-144], rax
   mov rdi, r13
   mov rsi, QWORD PTR [rbp-144]
@@ -13302,8 +13092,7 @@ _caustic_linker_linker_cst_build_data_got:
   mov rax, rbx
   add rax, 28
   mov QWORD PTR [rbp-184], rax
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-192], rax
   mov QWORD PTR [rbp-200], rax
   shl rax, 3
@@ -13318,8 +13107,7 @@ _caustic_linker_linker_cst_build_data_got:
   mov rsi, QWORD PTR [rbp-224]
   call _caustic_linker_elf_reader_cst_buf_emit64_le
   mov QWORD PTR [rbp-232], rax
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-240], rax
   add rax, 1
   mov QWORD PTR [rbp-248], rax
@@ -13328,8 +13116,7 @@ _caustic_linker_linker_cst_build_data_got:
 .L352:
   mov r14, r12
 .L353:
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-256], rax
   add rax, 1
   mov QWORD PTR [rbp-264], rax
@@ -13370,8 +13157,7 @@ _caustic_linker_linker_cst_build_rela_dyn:
   mov rbx, 0
   mov r14, rbx
 .L354:
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-100], rax
   mov rax, r12
   add rax, 8
@@ -13382,8 +13168,7 @@ _caustic_linker_linker_cst_build_rela_dyn:
   cmp rax, QWORD PTR [rbp-108]
   jge .L355
   xor r10, r10
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-124], rax
   mov rdi, r12
   mov rsi, QWORD PTR [rbp-124]
@@ -13432,8 +13217,7 @@ _caustic_linker_linker_cst_build_rela_dyn:
   jmp .L357
 .L356:
 .L357:
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-268], rax
   mov r15, QWORD PTR [rbp-268]
   add r15, 1
@@ -13572,7 +13356,6 @@ _caustic_linker_elf_writer_cst_write_elf_header:
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit8
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, 76
   mov rdi, rbx
@@ -13622,7 +13405,6 @@ _caustic_linker_elf_writer_cst_write_elf_header:
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   movsxd r12, DWORD PTR [rbp-60]
   mov rdi, rbx
@@ -13662,7 +13444,6 @@ _caustic_linker_elf_writer_cst_write_elf_header:
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, QWORD PTR [rbp-84]
   mov rdi, rbx
@@ -13691,7 +13472,6 @@ _caustic_linker_elf_writer_cst_write_elf_header:
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit16_le
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
 .loc 1 57 0
   movsxd r12, DWORD PTR [rbp-88]
@@ -13714,13 +13494,11 @@ _caustic_linker_elf_writer_cst_write_elf_header:
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit16_le
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   movsxd r12, DWORD PTR [rbp-96]
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit16_le
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 104
@@ -13806,13 +13584,11 @@ _caustic_linker_elf_writer_cst_write_phdr:
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, QWORD PTR [rbp-88]
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
 .loc 1 71 0
   mov r12, QWORD PTR [rbp-96]
@@ -13835,7 +13611,6 @@ _caustic_linker_elf_writer_cst_write_phdr:
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 120
@@ -13974,7 +13749,6 @@ _caustic_linker_elf_writer_cst_write_shdr:
   mov rdi, rbx
   mov rsi, r12
   call _caustic_linker_elf_reader_cst_buf_emit64_le
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 136
@@ -14000,8 +13774,7 @@ _caustic_linker_elf_writer_cst_write_null_shdr:
   mov r13, r12
 .L360:
 .loc 1 101 0
-  mov r12, r13
-  movsxd r12, r12d
+  movsxd r12, r13d
   mov rax, r12
   cmp rax, 64
   jge .L361
@@ -14011,8 +13784,7 @@ _caustic_linker_elf_writer_cst_write_null_shdr:
   call _caustic_linker_elf_reader_cst_buf_emit8
   mov QWORD PTR [rbp-76], rax
 .loc 1 102 0
-  mov rax, r13
-  movsxd rax, eax
+  movsxd rax, r13d
   mov QWORD PTR [rbp-84], rax
   mov rbx, QWORD PTR [rbp-84]
   add rbx, 1
@@ -14214,8 +13986,7 @@ _caustic_linker_elf_writer_cst_build_static_metadata:
   mov r8, r14
   mov r8, QWORD PTR [r8]
 .loc 1 129 0
-  mov r14, r8
-  movsxd r14, r14d
+  movsxd r14, r8d
   mov rax, r14
   mov rcx, r12
   mov DWORD PTR [rcx], eax
@@ -14236,8 +14007,7 @@ _caustic_linker_elf_writer_cst_build_static_metadata:
   mov r8, r14
   mov r8, QWORD PTR [r8]
 .loc 1 133 0
-  mov r14, r8
-  movsxd r14, r14d
+  movsxd r14, r8d
 .loc 1 132 0
   mov rax, r14
   mov rcx, r12
@@ -14249,15 +14019,13 @@ _caustic_linker_elf_writer_cst_build_static_metadata:
   mov rsi, r12
   mov rdx, r14
   call _caustic_linker_elf_reader_cst_buf_append
-  mov r12, rax
   mov r12, rbx
   add r12, 80
   mov r14, rbx
   add r14, 8
   mov r8, r14
   mov r8, QWORD PTR [r8]
-  mov r14, r8
-  movsxd r14, r14d
+  movsxd r14, r8d
   mov rax, r14
   mov rcx, r12
   mov DWORD PTR [rcx], eax
@@ -14280,8 +14048,7 @@ _caustic_linker_elf_writer_cst_build_static_metadata:
   mov r8, r14
   mov r8, QWORD PTR [r8]
 .loc 1 138 0
-  mov r14, r8
-  movsxd r14, r14d
+  movsxd r14, r8d
   mov rax, r14
   mov rcx, r12
   mov DWORD PTR [rcx], eax
@@ -14303,8 +14070,7 @@ _caustic_linker_elf_writer_cst_build_static_metadata:
   add r14, 8
   mov r8, r14
   mov r8, QWORD PTR [r8]
-  mov r14, r8
-  movsxd r14, r14d
+  movsxd r14, r8d
 .loc 1 140 0
   mov rax, r14
   mov rcx, r12
@@ -14328,8 +14094,7 @@ _caustic_linker_elf_writer_cst_build_static_metadata:
   mov r8, r14
   mov r8, QWORD PTR [r8]
 .loc 1 143 0
-  mov r14, r8
-  movsxd r14, r14d
+  movsxd r14, r8d
   mov rax, r14
   mov rcx, r12
   mov DWORD PTR [rcx], eax
@@ -14354,8 +14119,7 @@ _caustic_linker_elf_writer_cst_build_static_metadata:
   mov r8, r14
   mov r8, QWORD PTR [r8]
 .loc 1 150 0
-  mov r14, r8
-  movsxd r14, r14d
+  movsxd r14, r8d
 .loc 1 148 0
   mov rax, r14
   mov rcx, r12
@@ -14385,8 +14149,7 @@ _caustic_linker_elf_writer_cst_build_static_metadata:
   mov r14, r12
 .L364:
 .loc 1 168 0
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-204], rax
   cmp rax, 24
   jge .L365
@@ -14400,8 +14163,7 @@ _caustic_linker_elf_writer_cst_build_static_metadata:
   call _caustic_linker_elf_reader_cst_buf_emit8
   mov QWORD PTR [rbp-220], rax
 .loc 1 171 0
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-228], rax
 .loc 1 172 0
 .loc 1 171 0
@@ -14419,8 +14181,7 @@ _caustic_linker_elf_writer_cst_build_static_metadata:
   mov r12, r13
   mov r12, QWORD PTR [r12]
 .loc 1 172 0
-  mov r13, r12
-  movsxd r13, r13d
+  movsxd r13, r12d
 .loc 1 174 0
   mov r12, rbx
   add r12, 48
@@ -14434,8 +14195,7 @@ _caustic_linker_elf_writer_cst_build_static_metadata:
 .loc 1 175 0
   mov r12, rbx
   add r12, 24
-  mov r14, r13
-  movsxd r14, r14d
+  movsxd r14, r13d
   mov r13, r14
   mov rdi, r12
   mov rsi, r13
@@ -14498,8 +14258,7 @@ _caustic_linker_elf_writer_cst_build_static_metadata:
   mov r13, r12
 .L366:
 .loc 1 188 0
-  mov rax, r13
-  movsxd rax, eax
+  movsxd rax, r13d
   mov QWORD PTR [rbp-236], rax
 .loc 1 189 0
   mov rax, QWORD PTR [rbp-196]
@@ -14515,8 +14274,7 @@ _caustic_linker_elf_writer_cst_build_static_metadata:
   xor r10, r10
 .loc 1 193 0
 .loc 1 194 0
-  mov rax, r13
-  movsxd rax, eax
+  movsxd rax, r13d
   mov QWORD PTR [rbp-252], rax
 .loc 1 193 0
   mov rdi, QWORD PTR [rbp-196]
@@ -14755,8 +14513,7 @@ _caustic_linker_elf_writer_cst_build_static_metadata:
   add rax, 24
   mov QWORD PTR [rbp-788], rax
 .loc 1 218 0
-  mov rax, r15
-  movsxd rax, eax
+  movsxd rax, r15d
   mov QWORD PTR [rbp-796], rax
 .loc 1 216 0
   mov rdi, QWORD PTR [rbp-788]
@@ -14798,8 +14555,7 @@ _caustic_linker_elf_writer_cst_build_static_metadata:
   mov QWORD PTR [rbp-884], rax
 .L369:
 .loc 1 224 0
-  mov rax, r13
-  movsxd rax, eax
+  movsxd rax, r13d
   mov QWORD PTR [rbp-868], rax
   add rax, 1
   mov QWORD PTR [rbp-876], rax
@@ -15267,8 +15023,7 @@ _caustic_linker_elf_writer_cst_write_executable:
   mov r13, QWORD PTR [rbp-400]
   movsxd r13, r13d
 .loc 1 301 0
-  mov r14, r8
-  movsxd r14, r14d
+  movsxd r14, r8d
   mov r15, QWORD PTR [rbp-480]
   movsxd r15, r15d
 .loc 1 298 0
@@ -16022,7 +15777,6 @@ _caustic_linker_elf_writer_cst_write_executable:
   call _caustic_linker_elf_writer_cst_write_shdr
   mov rbx, rax
   add rsp, 48
-  mov rbx, QWORD PTR [rbp-648]
   mov rbx, QWORD PTR [rbp-704]
 .loc 1 323 0
   jmp .L407
@@ -16088,8 +15842,7 @@ _caustic_linker_elf_writer_cst_calc_dynstr_size:
   mov r13, r14
 .L412:
 .loc 1 421 0
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-140], rax
   mov r15, rbx
   add r15, 156
@@ -16102,8 +15855,7 @@ _caustic_linker_elf_writer_cst_calc_dynstr_size:
 .loc 1 420 0
 .loc 1 423 0
 .loc 1 424 0
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-164], rax
 .loc 1 423 0
   shl rax, 3
@@ -16131,8 +15883,7 @@ _caustic_linker_elf_writer_cst_calc_dynstr_size:
   mov QWORD PTR [rbp-228], rax
 .loc 1 426 0
 .loc 1 428 0
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-236], rax
   mov r14, QWORD PTR [rbp-236]
   add r14, 1
@@ -16149,8 +15900,7 @@ _caustic_linker_elf_writer_cst_calc_dynstr_size:
   mov rbx, r13
 .L414:
 .loc 1 434 0
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-244], rax
   mov r14, QWORD PTR [rbp-124]
   movsxd r14, r14d
@@ -16160,8 +15910,7 @@ _caustic_linker_elf_writer_cst_calc_dynstr_size:
 .loc 1 435 0
   xor r10, r10
 .loc 1 437 0
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-252], rax
 .loc 1 436 0
   mov rdi, QWORD PTR [rbp-116]
@@ -16188,8 +15937,7 @@ _caustic_linker_elf_writer_cst_calc_dynstr_size:
   mov QWORD PTR [rbp-308], rax
 .loc 1 440 0
 .loc 1 441 0
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-316], rax
   mov r13, QWORD PTR [rbp-316]
   add r13, 1
@@ -17131,7 +16879,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rx_sections:
   mov rdi, rbx
   mov rsi, r15
   call _caustic_linker_elf_reader_cst_buf_pad_to
-  mov r15, rax
   mov r15, r14
   mov r15, QWORD PTR [r15]
   mov r8, r14
@@ -17142,7 +16889,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rx_sections:
   mov rsi, r15
   mov rdx, r14
   call _caustic_linker_elf_reader_cst_buf_append
-  mov r14, rax
   mov r14, r13
   add r14, 16
   mov r15, r14
@@ -17150,7 +16896,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rx_sections:
   mov rdi, rbx
   mov rsi, r15
   call _caustic_linker_elf_reader_cst_buf_pad_to
-  mov r14, rax
   mov r14, QWORD PTR [rbp-152]
   mov r14, QWORD PTR [r14]
   mov r8, QWORD PTR [rbp-152]
@@ -17161,7 +16906,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rx_sections:
   mov rsi, r14
   mov rdx, r15
   call _caustic_linker_elf_reader_cst_buf_append
-  mov r14, rax
   mov r14, r13
   add r14, 32
   mov r15, r14
@@ -17169,7 +16913,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rx_sections:
   mov rdi, rbx
   mov rsi, r15
   call _caustic_linker_elf_reader_cst_buf_pad_to
-  mov r14, rax
   mov r14, QWORD PTR [rbp-160]
   mov r14, QWORD PTR [r14]
   mov r8, QWORD PTR [rbp-160]
@@ -17180,7 +16923,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rx_sections:
   mov rsi, r14
   mov rdx, r15
   call _caustic_linker_elf_reader_cst_buf_append
-  mov r14, rax
   mov r14, r13
   add r14, 48
   mov r15, r14
@@ -17188,7 +16930,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rx_sections:
   mov rdi, rbx
   mov rsi, r15
   call _caustic_linker_elf_reader_cst_buf_pad_to
-  mov r14, rax
   mov r14, QWORD PTR [rbp-168]
   mov r14, QWORD PTR [r14]
   mov r8, QWORD PTR [rbp-168]
@@ -17199,7 +16940,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rx_sections:
   mov rsi, r14
   mov rdx, r15
   call _caustic_linker_elf_reader_cst_buf_append
-  mov r14, rax
   mov r14, r13
   add r14, 64
   mov r15, r14
@@ -17207,7 +16947,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rx_sections:
   mov rdi, rbx
   mov rsi, r15
   call _caustic_linker_elf_reader_cst_buf_pad_to
-  mov r14, rax
   mov r14, QWORD PTR [rbp-176]
   mov r14, QWORD PTR [r14]
   mov r8, QWORD PTR [rbp-176]
@@ -17218,7 +16957,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rx_sections:
   mov rsi, r14
   mov rdx, r15
   call _caustic_linker_elf_reader_cst_buf_append
-  mov r14, rax
   mov r14, r12
   add r14, 240
   mov r8, r14
@@ -17238,7 +16976,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rx_sections:
   mov rdi, rbx
   mov rsi, r15
   call _caustic_linker_elf_reader_cst_buf_pad_to
-  mov r15, rax
   mov r15, r14
   mov r15, QWORD PTR [r15]
   mov r8, r14
@@ -17260,7 +16997,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rx_sections:
   mov rdi, rbx
   mov rsi, r15
   call _caustic_linker_elf_reader_cst_buf_pad_to
-  mov r14, rax
   mov r14, QWORD PTR [rbp-184]
   mov r14, QWORD PTR [r14]
   mov r8, QWORD PTR [rbp-184]
@@ -17271,7 +17007,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rx_sections:
   mov rsi, r14
   mov rdx, r15
   call _caustic_linker_elf_reader_cst_buf_append
-  mov r14, rax
   mov r14, r13
   add r14, 112
   mov r13, r14
@@ -17279,7 +17014,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rx_sections:
   mov rdi, rbx
   mov rsi, r13
   call _caustic_linker_elf_reader_cst_buf_pad_to
-  mov r13, rax
   mov r13, QWORD PTR [rbp-192]
   mov r13, QWORD PTR [r13]
   mov r14, r12
@@ -17290,7 +17024,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rx_sections:
   mov rsi, r13
   mov rdx, r15
   call _caustic_linker_elf_reader_cst_buf_append
-  mov r13, rax
   mov r13, r12
   add r13, 80
   mov r14, r13
@@ -17359,7 +17092,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rw_sections:
   mov rdi, rbx
   mov rsi, r15
   call _caustic_linker_elf_reader_cst_buf_pad_to
-  mov r15, rax
   mov r15, r14
   mov r15, QWORD PTR [r15]
   mov r8, r14
@@ -17370,7 +17102,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rw_sections:
   mov rsi, r15
   mov rdx, r14
   call _caustic_linker_elf_reader_cst_buf_append
-  mov r14, rax
   mov r14, r12
   add r14, 232
   mov r8, r14
@@ -17390,7 +17121,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rw_sections:
   mov rdi, rbx
   mov rsi, r15
   call _caustic_linker_elf_reader_cst_buf_pad_to
-  mov r15, rax
   mov r15, r14
   mov r15, QWORD PTR [r15]
   mov r8, r14
@@ -17412,7 +17142,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rw_sections:
   mov rdi, rbx
   mov rsi, r15
   call _caustic_linker_elf_reader_cst_buf_pad_to
-  mov r14, rax
   mov r14, QWORD PTR [rbp-112]
   mov r14, QWORD PTR [r14]
   mov r8, QWORD PTR [rbp-112]
@@ -17423,7 +17152,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rw_sections:
   mov rsi, r14
   mov rdx, r15
   call _caustic_linker_elf_reader_cst_buf_append
-  mov r14, rax
   mov r14, r12
   add r14, 88
   mov r8, r14
@@ -17438,7 +17166,6 @@ _caustic_linker_elf_writer_cst_write_dyn_rw_sections:
   mov rdi, rbx
   mov rsi, r13
   call _caustic_linker_elf_reader_cst_buf_pad_to
-  mov r13, rax
   mov r13, QWORD PTR [rbp-120]
   mov r13, QWORD PTR [r13]
   mov r14, r12
@@ -17480,7 +17207,6 @@ _caustic_linker_elf_writer_cst_print_dyn_layout:
   lea rbx, [rip+.LC52]
   mov rdi, rbx
   call _caustic_linker_elf_reader_cst_print_str
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, rbx
   add r12, 8
@@ -17492,7 +17218,6 @@ _caustic_linker_elf_writer_cst_print_dyn_layout:
   lea rbx, [rip+.LC53]
   mov rdi, rbx
   call _caustic_linker_elf_reader_cst_print_str
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, rbx
   add r12, 24
@@ -17504,7 +17229,6 @@ _caustic_linker_elf_writer_cst_print_dyn_layout:
   lea rbx, [rip+.LC54]
   mov rdi, rbx
   call _caustic_linker_elf_reader_cst_print_str
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, rbx
   add r12, 40
@@ -17516,7 +17240,6 @@ _caustic_linker_elf_writer_cst_print_dyn_layout:
   lea rbx, [rip+.LC55]
   mov rdi, rbx
   call _caustic_linker_elf_reader_cst_print_str
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, rbx
   add r12, 56
@@ -17528,7 +17251,6 @@ _caustic_linker_elf_writer_cst_print_dyn_layout:
   lea rbx, [rip+.LC56]
   mov rdi, rbx
   call _caustic_linker_elf_reader_cst_print_str
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, rbx
   add r12, 72
@@ -17540,7 +17262,6 @@ _caustic_linker_elf_writer_cst_print_dyn_layout:
   lea rbx, [rip+.LC57]
   mov rdi, rbx
   call _caustic_linker_elf_reader_cst_print_str
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, rbx
   add r12, 104
@@ -17552,7 +17273,6 @@ _caustic_linker_elf_writer_cst_print_dyn_layout:
   lea rbx, [rip+.LC58]
   mov rdi, rbx
   call _caustic_linker_elf_reader_cst_print_str
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, rbx
   add r12, 120
@@ -17564,7 +17284,6 @@ _caustic_linker_elf_writer_cst_print_dyn_layout:
   lea rbx, [rip+.LC59]
   mov rdi, rbx
   call _caustic_linker_elf_reader_cst_print_str
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, rbx
   add r12, 160
@@ -17576,7 +17295,6 @@ _caustic_linker_elf_writer_cst_print_dyn_layout:
   lea rbx, [rip+.LC60]
   mov rdi, rbx
   call _caustic_linker_elf_reader_cst_print_str
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, rbx
   add r12, 192
@@ -17588,7 +17306,6 @@ _caustic_linker_elf_writer_cst_print_dyn_layout:
   lea rbx, [rip+.LC61]
   mov rdi, rbx
   call _caustic_linker_elf_reader_cst_print_str
-  mov rbx, rax
   mov rbx, QWORD PTR [rbp-56]
   mov r12, rbx
   add r12, 208
@@ -17600,7 +17317,6 @@ _caustic_linker_elf_writer_cst_print_dyn_layout:
   lea rbx, [rip+.LC62]
   mov rdi, rbx
   call _caustic_linker_elf_reader_cst_print_str
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 64
@@ -17638,8 +17354,7 @@ _caustic_linker_elf_writer_cst_write_dynamic_executable:
   call _caustic_linker_linker_cst_count_data_dynsyms
   mov r12, rax
   mov QWORD PTR [rbp-508], 28
-  mov r8, r15
-  movsxd r8, r8d
+  movsxd r8, r15d
   mov r9, r8
   add r9, 1
   mov r8, r9
@@ -17647,16 +17362,14 @@ _caustic_linker_elf_writer_cst_write_dynamic_executable:
   mov rcx, 24
   imul rax, rcx
   mov QWORD PTR [rbp-516], rax
-  mov r8, r14
-  movsxd r8, r8d
+  movsxd r8, r14d
   mov r9, r8
   mov rax, r9
   mov rcx, 24
   imul rax, rcx
   mov QWORD PTR [rbp-524], rax
   mov r8, 16
-  mov r9, r14
-  movsxd r9, r9d
+  movsxd r9, r14d
   mov r10, r9
   mov r9, r10
   shl r9, 4
@@ -17664,31 +17377,26 @@ _caustic_linker_elf_writer_cst_write_dynamic_executable:
   add rax, r9
   mov QWORD PTR [rbp-532], rax
   mov r8, 24
-  mov r9, r14
-  movsxd r9, r9d
+  movsxd r9, r14d
   mov r14, r9
   mov r9, r14
   shl r9, 3
   mov rax, r8
   add rax, r9
   mov QWORD PTR [rbp-540], rax
-  mov r8, r12
-  movsxd r8, r8d
+  movsxd r8, r12d
   mov r9, r8
   mov rax, r9
   shl rax, 3
   mov QWORD PTR [rbp-556], rax
-  mov r8, r12
-  movsxd r8, r8d
+  movsxd r8, r12d
   mov r9, r8
   mov rax, r9
   mov rcx, 24
   imul rax, rcx
   mov QWORD PTR [rbp-548], rax
-  mov r8, r15
-  movsxd r8, r8d
-  mov r9, r8
-  movsxd r9, r9d
+  movsxd r8, r15d
+  movsxd r9, r8d
   mov rax, r9
   cmp rax, 1
   jge .L424
@@ -17698,36 +17406,31 @@ _caustic_linker_elf_writer_cst_write_dynamic_executable:
 .L424:
   mov r10, r8
 .L425:
-  mov r8, r15
-  movsxd r8, r8d
+  movsxd r8, r15d
   mov r9, r8
   add r9, 1
   mov r8, 8
-  mov rsi, r10
-  movsxd rsi, esi
+  movsxd rsi, r10d
   mov r10, rsi
   mov rsi, r10
   shl rsi, 2
   mov r10, r8
   add r10, rsi
-  mov r8, r9
-  movsxd r8, r8d
+  movsxd r8, r9d
   mov r9, r8
   mov r8, r9
   shl r8, 2
   mov r14, r10
   add r14, r8
   xor r10, r10
-  mov r13, r15
-  movsxd r13, r13d
+  movsxd r13, r15d
   mov rdi, QWORD PTR [rbp-612]
   mov rsi, QWORD PTR [rbp-500]
   mov rdx, r13
   call _caustic_linker_elf_writer_cst_calc_dynstr_size
   mov r13, rax
   mov r8, 0
-  mov r9, r12
-  movsxd r9, r9d
+  movsxd r9, r12d
   mov rax, r9
   test rax, rax
   jle .L426
@@ -17744,8 +17447,7 @@ _caustic_linker_elf_writer_cst_write_dynamic_executable:
   mov r12, r8
   mov r8, r12
   add r8, 11
-  mov r12, r9
-  movsxd r12, r12d
+  movsxd r12, r9d
   mov r9, r12
   mov r12, r8
   add r12, r9
@@ -17828,8 +17530,7 @@ _caustic_linker_elf_writer_cst_write_dynamic_executable:
   mov rdi, QWORD PTR [rbp-612]
   call _caustic_linker_linker_cst_build_symtab
   mov r12, rax
-  mov r13, r12
-  movsxd r13, r13d
+  movsxd r13, r12d
   mov rax, r13
   test rax, rax
   je .L428
@@ -17942,7 +17643,6 @@ _caustic_linker_elf_writer_cst_write_dynamic_executable:
   add rsp, 32
   mov rdi, QWORD PTR [rbp-612]
   call _caustic_linker_linker_cst_build_rela_dyn
-  mov r12, rax
   mov r12, QWORD PTR [rbp-612]
   add r12, 176
   mov r13, r12
@@ -17986,8 +17686,7 @@ _caustic_linker_elf_writer_cst_write_dynamic_executable:
   mov r13, r14
   mov r13, QWORD PTR [r13]
   mov r14, 0
-  mov r15, r12
-  movsxd r15, r15d
+  movsxd r15, r12d
   mov r12, 0
   mov rbx, 0
   mov rax, rbx
@@ -18219,8 +17918,7 @@ _caustic_linker_elf_writer_cst_write_dynamic_executable:
   mov rsi, QWORD PTR [rbp-492]
   call _caustic_linker_elf_writer_cst_write_buf_to_file
   mov rbx, rax
-  mov r12, rbx
-  movsxd r12, r12d
+  movsxd r12, ebx
   mov rax, r12
   test rax, rax
   je .L430
@@ -18533,7 +18231,6 @@ print_str:
   mov rsi, r12
   mov rdx, rbx
   call _std_linux_cst_write
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 64
@@ -18568,7 +18265,6 @@ print_out:
   mov rsi, r12
   mov rdx, rbx
   call _std_linux_cst_write
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 64
@@ -18646,8 +18342,7 @@ print_int:
   jle .L451
 .loc 1 56 0
   lea r9, [rbp-80]
-  mov r10, r12
-  movsxd r10, r10d
+  movsxd r10, r12d
   mov rax, r9
   add rax, r10
   mov QWORD PTR [rbp-116], rax
@@ -18677,8 +18372,7 @@ print_int:
   pop rdx
   mov QWORD PTR [rbp-148], rax
 .loc 1 58 0
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-156], rax
   mov r14, QWORD PTR [rbp-156]
   sub r14, 1
@@ -18693,16 +18387,14 @@ print_int:
   cmp rax, 1
   jne .L452
   lea rbx, [rbp-80]
-  mov r13, r12
-  movsxd r13, r13d
+  movsxd r13, r12d
   mov r14, rbx
   add r14, r13
   mov rbx, 45
   mov rax, rbx
   mov rcx, r14
   mov BYTE PTR [rcx], al
-  mov rbx, r12
-  movsxd rbx, ebx
+  movsxd rbx, r12d
   mov r13, rbx
   sub r13, 1
   mov rbx, r13
@@ -18711,8 +18403,7 @@ print_int:
   mov rbx, r12
 .L453:
 .loc 1 61 0
-  mov r12, rbx
-  movsxd r12, r12d
+  movsxd r12, ebx
   mov rbx, r12
   mov r12, rbx
   add r12, 1
@@ -18732,7 +18423,6 @@ print_int:
   mov rsi, r14
   mov rdx, r15
   call _std_linux_cst_write
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 164
@@ -19003,7 +18693,6 @@ print_usage:
   lea rbx, [rip+.LC74]
   mov rdi, rbx
   call print_out
-  mov rbx, rax
   mov rbx, 0
   mov rax, rbx
   add rsp, 56
@@ -20077,8 +19766,7 @@ main:
   mov r12, rbx
 .L532:
 .loc 1 342 0
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-3972], rax
   mov rax, QWORD PTR [rbp-4068]
   movsxd rax, eax
@@ -20089,8 +19777,7 @@ main:
 .loc 1 343 0
   lea rax, [rbp-2160]
   mov QWORD PTR [rbp-3996], rax
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-4004], rax
   shl rax, 3
   mov QWORD PTR [rbp-4012], rax
@@ -20144,8 +19831,7 @@ main:
   mov r15, r12
 .L535:
 .loc 1 350 0
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-4140], rax
   add rax, 1
   mov QWORD PTR [rbp-4148], rax
@@ -20325,8 +20011,7 @@ main:
   mov r14, rbx
 .L544:
 .loc 1 381 0
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-4172], rax
   mov r15, QWORD PTR [rbp-4156]
   movsxd r15, r15d
@@ -20335,8 +20020,7 @@ main:
   jge .L545
 .loc 1 382 0
   lea r12, [rbp-2420]
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-4180], rax
   shl rax, 3
   mov QWORD PTR [rbp-4188], rax
@@ -20347,8 +20031,7 @@ main:
   mov QWORD PTR [rbp-4204], rax
   mov QWORD PTR [rbp-4212], rax
 .loc 1 383 0
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-4220], rax
   shl rax, 3
   mov QWORD PTR [rbp-4228], rax
@@ -20362,8 +20045,7 @@ main:
   mov rcx, QWORD PTR [rbp-4236]
   mov QWORD PTR [rcx], rax
 .loc 1 384 0
-  mov rax, r14
-  movsxd rax, eax
+  movsxd rax, r14d
   mov QWORD PTR [rbp-4260], rax
   mov rbx, QWORD PTR [rbp-4260]
   add rbx, 1
@@ -20415,8 +20097,7 @@ main:
   mov r12, rbx
 .L546:
 .loc 1 394 0
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-4268], rax
   mov rax, QWORD PTR [rbp-4068]
   movsxd rax, eax
@@ -20426,8 +20107,7 @@ main:
   jge .L547
 .loc 1 395 0
   lea r15, [rbp-2160]
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-4276], rax
   shl rax, 3
   mov QWORD PTR [rbp-4284], rax
@@ -20494,8 +20174,7 @@ main:
   mov QWORD PTR [rbp-4428], rax
   mov QWORD PTR [rbp-4436], rax
 .loc 1 408 0
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-4444], rax
   shl rax, 3
   mov QWORD PTR [rbp-4452], rax
@@ -20631,8 +20310,7 @@ main:
 .L550:
 .L551:
 .loc 1 428 0
-  mov rax, r12
-  movsxd rax, eax
+  movsxd rax, r12d
   mov QWORD PTR [rbp-4812], rax
   mov r14, QWORD PTR [rbp-4812]
   add r14, 1
@@ -20771,8 +20449,7 @@ main:
   call _caustic_linker_linker_cst_build_symtab
   mov rbx, rax
 .loc 1 459 0
-  mov r12, rbx
-  movsxd r12, r12d
+  movsxd r12, ebx
   mov rax, r12
   test rax, rax
   je .L556
