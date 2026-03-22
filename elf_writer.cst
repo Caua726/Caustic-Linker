@@ -201,6 +201,7 @@ fn build_static_metadata(meta as *StaticMeta, ls as *linker.LinkerState,
     // Calculate metadata file positions
     let is i64 as meta_off with mut = data_file_off + ls.data_size;
     if (has_data == 0) { meta_off = text_file_off + rx_file_size; }
+    if (has_data == 1 && ls.data_size == 0 && ls.rodata_size > 0) { meta_off = data_file_off; }
     if (meta_off % 8 != 0) { meta_off = meta_off + 8 - (meta_off % 8); }
 
     meta.symtab_file_off = meta_off;
@@ -224,10 +225,10 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     let is *reader.ByteBuffer as data_buf = linker.get_data(ls);
     let is *linker.GlobalSymTab as gsyms = linker.get_gsyms(ls);
 
-    // Determine segments
+    // Determine segments: R+X (.text), R+W (.rodata + .data + .bss)
     let is i32 as num_phdrs with mut = 2;
     let is i32 as has_data with mut = 0;
-    if (ls.data_size > 0 || ls.bss_total > 0) {
+    if (ls.rodata_size > 0 || ls.data_size > 0 || ls.bss_total > 0) {
         has_data = 1;
     } else {
         num_phdrs = 1;
@@ -235,13 +236,15 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
 
     let is i64 as phdr_off = ELF_HDR_SIZE;
     let is i64 as text_file_off = PAGE_SIZE;
-    let is i64 as rodata_file_off = text_file_off + ls.text_size;
-    let is i64 as rx_file_size = ls.text_size + ls.rodata_size;
+    let is i64 as rx_file_size = ls.text_size;
 
-    let is i64 as data_file_off with mut = text_file_off + rx_file_size;
-    if (has_data == 1 && data_file_off % PAGE_SIZE != 0) {
-        data_file_off = data_file_off + PAGE_SIZE - (data_file_off % PAGE_SIZE);
+    // .rodata + .data in R+W segment
+    let is i64 as rw_file_off with mut = text_file_off + rx_file_size;
+    if (rw_file_off % PAGE_SIZE != 0) {
+        rw_file_off = rw_file_off + PAGE_SIZE - (rw_file_off % PAGE_SIZE);
     }
+    let is i64 as rodata_file_off = rw_file_off;
+    let is i64 as data_file_off = rw_file_off + ls.rodata_size;
 
     // Build metadata (symtab, strtab, shstrtab, section headers)
     let is i64 as shdr_file_off with mut = 0;
@@ -265,24 +268,24 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     write_phdr(&out, PT_LOAD, PF_R + PF_X, 0, ls.base_addr, ls.base_addr,
                text_file_off + rx_file_size, text_file_off + rx_file_size, PAGE_SIZE);
 
-    if (has_data == 1) {
-        write_phdr(&out, PT_LOAD, PF_R + PF_W, data_file_off, ls.data_vaddr,
-                   ls.data_vaddr, ls.data_size, ls.data_size + ls.bss_total, PAGE_SIZE);
+    let is i64 as rw_mem_size = ls.rodata_size + ls.data_size + ls.bss_total;
+    let is i64 as rw_file_sz = ls.rodata_size + ls.data_size;
+    if (rw_mem_size > 0) {
+        write_phdr(&out, PT_LOAD, PF_R + PF_W, rw_file_off, ls.rodata_vaddr,
+                   ls.rodata_vaddr, rw_file_sz, rw_mem_size, PAGE_SIZE);
     }
 
     // Pad + sections
     reader.buf_pad_to(&out, text_file_off);
     reader.buf_append(&out, text_buf.data, ls.text_size);
 
+    // R+W segment: .rodata + .data
+    reader.buf_pad_to(&out, rodata_file_off);
     if (ls.rodata_size > 0) {
         reader.buf_append(&out, rodata_buf.data, ls.rodata_size);
     }
-
-    if (has_data == 1) {
-        reader.buf_pad_to(&out, data_file_off);
-        if (ls.data_size > 0) {
-            reader.buf_append(&out, data_buf.data, ls.data_size);
-        }
+    if (ls.data_size > 0) {
+        reader.buf_append(&out, data_buf.data, ls.data_size);
     }
 
     // Metadata + section headers

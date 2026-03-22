@@ -158,6 +158,12 @@ fn read_u64(ptr as *u8, off as i64) as i64 {
     return lo + hi * 4294967296;
 }
 
+fn read_i64(ptr as *u8, off as i64) as i64 {
+    let is i64 as lo = read_u32(ptr, off);
+    let is i64 as hi = read_i32(ptr, off + 4);
+    return lo + hi * 4294967296;
+}
+
 // ============================================================
 // String helpers
 // ============================================================
@@ -539,7 +545,7 @@ fn parse_rela_section(data as *u8, obj as *ObjFile,
         let is i64 as rent = rela_off + ri * 24;
         let is i64 as r_offset = read_u64(data, rent);
         let is i64 as r_info = read_u64(data, rent + 8);
-        let is i64 as r_addend = read_u64(data, rent + 16);
+        let is i64 as r_addend = read_i64(data, rent + 16);
 
         let is i32 as rsym = cast(i32, r_info >> 32);
         let is i64 as rtype = r_info & 4294967295;

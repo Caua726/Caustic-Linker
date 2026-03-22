@@ -273,13 +273,15 @@ fn merge_sections(ls as *LinkerState) as void {
 
 fn assign_addresses(ls as *LinkerState) as void {
     ls.text_vaddr = ls.base_addr + 4096;
-    ls.rodata_vaddr = ls.text_vaddr + ls.text_size;
 
-    let is i64 as rx_end = ls.text_vaddr + ls.text_size + ls.rodata_size;
-    ls.data_vaddr = rx_end;
+    // .rodata goes in R+W segment (after page boundary, before .data)
+    let is i64 as rx_end = ls.text_vaddr + ls.text_size;
+    let is i64 as rw_start with mut = rx_end;
     if (rx_end % 4096 != 0) {
-        ls.data_vaddr = rx_end + 4096 - (rx_end % 4096);
+        rw_start = rx_end + 4096 - (rx_end % 4096);
     }
+    ls.rodata_vaddr = rw_start;
+    ls.data_vaddr = rw_start + ls.rodata_size;
     ls.bss_vaddr = ls.data_vaddr + ls.data_size;
 }
 
@@ -324,11 +326,10 @@ fn build_symtab(ls as *LinkerState) as i32 {
                 if (existing >= 0) {
                     let is *GlobalSym as eg = gsym_get(gsyms, existing);
                     if (eg.defined == 1) {
-                        if (ls.verbose == 1) {
-                            reader.print_str("warning: duplicate symbol: ");
-                            linux.write(linux.STDERR, sym.name, cast(i64, sym.name_len));
-                            reader.print_str("\n");
-                        }
+                        reader.print_str("error: duplicate symbol: ");
+                        linux.write(linux.STDERR, sym.name, cast(i64, sym.name_len));
+                        reader.print_str("\n");
+                        errors = errors + 1;
                     } else {
                         eg.section = sym.section;
                         eg.vaddr = vaddr;
@@ -487,8 +488,8 @@ fn apply_relocations(ls as *LinkerState) as void {
                     target_data[buf_offset + 2] = cast(u8, (value >> 16) & 255);
                     target_data[buf_offset + 3] = cast(u8, (value >> 24) & 255);
                 }
-                else if (rel.rtype == reader.R_X86_64_GOTPCREL) {
-                    // S = data GOT entry vaddr for this symbol
+                else if (rel.rtype == reader.R_X86_64_GOTPCREL && cast(i64, ls.dynsyms) != 0) {
+                    // S = data GOT entry vaddr for this symbol (dynamic mode only)
                     let is *reader.ObjSym as sym = reader.sym_get(obj, rel.sym_idx);
                     let is i64 as got_addr = get_data_got_vaddr(ls, sym.name, sym.name_len);
                     let is i64 as value = got_addr + A - P;
@@ -724,7 +725,7 @@ fn build_dynstr(ls as *LinkerState, lib_offsets as *i32) as void {
     // Add library names
     let is *i64 as lib_arr = cast(*i64, ls.needed_libs);
     let is i32 as li with mut = 0;
-    while (li < ls.needed_count) {
+    while (li < ls.needed_count && li < 32) {
         lib_offsets[li] = cast(i32, dynstr.len);
         let is *u8 as lib_name = cast(*u8, lib_arr[li]);
         let is i64 as lib_len = reader.strlen(lib_name);
