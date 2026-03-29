@@ -1,5 +1,6 @@
 use "../std/mem.cst" as mem;
 use "../std/linux.cst" as linux;
+use "../src/ir/opt_mem.cst" as om;
 use "elf_reader.cst" as reader;
 use "linker.cst" as linker;
 use "elf_writer.cst" as writer;
@@ -99,7 +100,7 @@ fn print_usage() as void {
 
 // Convert -l<name> to library soname by probing /usr/lib/lib<name>.so.<V>
 fn build_soname(name as *u8, name_len as i64, ver as i64) as *u8 {
-    let is *u8 as soname = mem.galloc(name_len + 9);
+    let is *u8 as soname = om.opt_alloc(name_len + 9);
     soname[0] = 108; // 'l'
     soname[1] = 105; // 'i'
     soname[2] = 98;  // 'b'
@@ -122,7 +123,7 @@ fn lib_to_soname(name as *u8) as *u8 {
 
     // Probe /usr/lib/lib<name>.so.<V> for V = 0..9
     // "/usr/lib/lib" = 12 chars, ".so." = 4, digit = 1, null = 1
-    let is *u8 as path = mem.galloc(12 + name_len + 6);
+    let is *u8 as path = om.opt_alloc(12 + name_len + 6);
     path[0] = 47; path[1] = 117; path[2] = 115; path[3] = 114;   // "/usr"
     path[4] = 47; path[5] = 108; path[6] = 105; path[7] = 98;    // "/lib"
     path[8] = 47; path[9] = 108; path[10] = 105; path[11] = 98;  // "/lib"
@@ -141,13 +142,13 @@ fn lib_to_soname(name as *u8) as *u8 {
         let is i64 as fd = linux.open(path, 0, 0);
         if (fd >= 0) {
             linux.close(fd);
-            mem.gfree(path);
+            om.opt_free(path);
             return build_soname(name, name_len, v);
         }
         v = v + 1;
     }
 
-    mem.gfree(path);
+    om.opt_free(path);
     // Fallback: lib<name>.so.6
     return build_soname(name, name_len, 6);
 }
@@ -192,7 +193,7 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
     // Store needed libs
     if (lib_count > 0) {
         let is *i64 as names_arr = cast(*i64, lib_names);
-        ls.needed_libs = mem.galloc(cast(i64, lib_count) * 8);
+        ls.needed_libs = om.opt_alloc(cast(i64, lib_count) * 8);
         let is *i64 as lib_arr = cast(*i64, ls.needed_libs);
         let is i32 as lci with mut = 0;
         while (lci < lib_count) {
@@ -204,13 +205,13 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
     }
 
     // Read all object files
-    ls.objs = mem.galloc(cast(i64, obj_count) * 8);
+    ls.objs = om.opt_alloc(cast(i64, obj_count) * 8);
     ls.obj_count = obj_count;
 
     fi = 0;
     while (fi < obj_count) {
         let is *u8 as path = cast(*u8, paths_arr[fi]);
-        let is *reader.ObjFile as obj = cast(*reader.ObjFile, mem.galloc(sizeof(reader.ObjFile)));
+        let is *reader.ObjFile as obj = cast(*reader.ObjFile, om.opt_alloc(sizeof(reader.ObjFile)));
 
         let is i32 as err = reader.read_obj(path, obj);
         if (err != 0) {
@@ -350,19 +351,10 @@ fn main(argc as i64, argv as i64) as i32 {
         fi = fi + 1;
     }
 
-    // Initialize heap: file_sizes * 4 + 256KB (extra for dynamic linking)
-    let is i64 as heap_size with mut = total_file_size * 8 + 1048576;
-    if (needed_count > 0) { heap_size = heap_size + 524288; } // extra 512KB for dynamic sections
-    if (heap_size < 2097152) { heap_size = 2097152; } // minimum 2MB
-    mem.gheapinit(heap_size);
-
     if (verbose == 1) {
         print_str("caustic-ld: linking ");
         print_int(cast(i64, num_inputs));
         print_str(" object file(s)\n");
-        print_str("  heap: ");
-        print_int(heap_size);
-        print_str(" bytes\n");
     }
 
     // Initialize linker state
@@ -375,7 +367,7 @@ fn main(argc as i64, argv as i64) as i32 {
 
     // Store needed libs (convert raw names to sonames)
     if (needed_count > 0) {
-        ls.needed_libs = mem.galloc(cast(i64, needed_count) * 8);
+        ls.needed_libs = om.opt_alloc(cast(i64, needed_count) * 8);
         let is *i64 as lib_arr = cast(*i64, ls.needed_libs);
         let is i32 as lci with mut = 0;
         while (lci < needed_count) {
@@ -387,13 +379,13 @@ fn main(argc as i64, argv as i64) as i32 {
     }
 
     // Read all object files
-    ls.objs = mem.galloc(cast(i64, num_inputs) * 8);
+    ls.objs = om.opt_alloc(cast(i64, num_inputs) * 8);
     ls.obj_count = num_inputs;
 
     fi = 0;
     while (fi < num_inputs) {
         let is *u8 as path = cast(*u8, input_files[fi]);
-        let is *reader.ObjFile as obj = cast(*reader.ObjFile, mem.galloc(sizeof(reader.ObjFile)));
+        let is *reader.ObjFile as obj = cast(*reader.ObjFile, om.opt_alloc(sizeof(reader.ObjFile)));
 
         let is i32 as err = reader.read_obj(path, obj);
         if (err != 0) {
