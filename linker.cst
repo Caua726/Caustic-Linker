@@ -1,5 +1,6 @@
 use "../std/mem.cst" as mem;
 use "../std/linux.cst" as linux;
+use "../src/ir/opt_mem.cst" as om;
 use "elf_reader.cst" as reader;
 
 // ============================================================
@@ -29,7 +30,7 @@ struct GlobalSymTab {
 fn gsym_init() as GlobalSymTab {
     let is GlobalSymTab as st;
     st.cap = 256;
-    st.data = mem.galloc(cast(i64, st.cap) * sizeof(GlobalSym));
+    st.data = om.opt_alloc(cast(i64, st.cap) * sizeof(GlobalSym));
     st.count = 0;
     return st;
 }
@@ -54,9 +55,9 @@ fn gsym_add(st as *GlobalSymTab, name as *u8, name_len as i32, section as i32,
             vaddr as i64, obj_idx as i32, defined as i32) as i32 {
     if (st.count >= st.cap) {
         let is i32 as new_cap = st.cap * 2;
-        let is *u8 as new_data = mem.galloc(cast(i64, new_cap) * sizeof(GlobalSym));
+        let is *u8 as new_data = om.opt_alloc(cast(i64, new_cap) * sizeof(GlobalSym));
         mem.memcpy(new_data, st.data, cast(i64, st.count) * sizeof(GlobalSym));
-        mem.gfree(st.data);
+        om.opt_free(st.data);
         st.data = new_data;
         st.cap = new_cap;
     }
@@ -119,7 +120,7 @@ struct LinkerState {
 }
 
 fn alloc_bytebuf(cap as i64) as *u8 {
-    let is *u8 as p = mem.galloc(sizeof(reader.ByteBuffer));
+    let is *u8 as p = om.opt_alloc(sizeof(reader.ByteBuffer));
     let is *reader.ByteBuffer as bb = cast(*reader.ByteBuffer, p);
     let is reader.ByteBuffer as tmp = reader.buf_init(cap);
     bb.data = tmp.data;
@@ -155,7 +156,7 @@ fn linker_init(base_addr as i64) as LinkerState {
     ls.text_size = 0;
     ls.rodata_size = 0;
     ls.data_size = 0;
-    let is *u8 as gs = mem.galloc(sizeof(GlobalSymTab));
+    let is *u8 as gs = om.opt_alloc(sizeof(GlobalSymTab));
     let is *GlobalSymTab as gst = cast(*GlobalSymTab, gs);
     let is GlobalSymTab as tmp_gs = gsym_init();
     gst.data = tmp_gs.data;
@@ -474,29 +475,81 @@ fn apply_relocations(ls as *LinkerState) as void {
             }
 
             if (cast(i64, target_data) != 0) {
-                if (rel.rtype == reader.R_X86_64_PC32 || rel.rtype == reader.R_X86_64_PLT32) {
+                let is i64 as rtype = rel.rtype;
+
+                // R_X86_64_64 (type 1): 64-bit absolute — S + A
+                if (rtype == reader.R_X86_64_64) {
+                    let is i64 as value = S + A;
+                    target_data[buf_offset]     = cast(u8, value & 255);
+                    target_data[buf_offset + 1] = cast(u8, (value >> 8) & 255);
+                    target_data[buf_offset + 2] = cast(u8, (value >> 16) & 255);
+                    target_data[buf_offset + 3] = cast(u8, (value >> 24) & 255);
+                    target_data[buf_offset + 4] = cast(u8, (value >> 32) & 255);
+                    target_data[buf_offset + 5] = cast(u8, (value >> 40) & 255);
+                    target_data[buf_offset + 6] = cast(u8, (value >> 48) & 255);
+                    target_data[buf_offset + 7] = cast(u8, (value >> 56) & 255);
+                }
+                // R_X86_64_PC32 (type 2), R_X86_64_PLT32 (type 4): 32-bit PC-relative — S + A - P
+                else if (rtype == reader.R_X86_64_PC32 || rtype == reader.R_X86_64_PLT32) {
                     let is i64 as value = S + A - P;
                     if (value > 2147483647 || value < (0 - 2147483648)) {
-                        if (ls.verbose == 1) {
-                            reader.print_str("warning: relocation overflow at ");
-                            reader.print_hex(P);
-                            reader.print_str("\n");
-                        }
+                        reader.print_str("warning: PC32 relocation overflow at ");
+                        reader.print_hex(P);
+                        reader.print_str("\n");
                     }
                     target_data[buf_offset]     = cast(u8, value & 255);
                     target_data[buf_offset + 1] = cast(u8, (value >> 8) & 255);
                     target_data[buf_offset + 2] = cast(u8, (value >> 16) & 255);
                     target_data[buf_offset + 3] = cast(u8, (value >> 24) & 255);
                 }
-                else if (rel.rtype == reader.R_X86_64_GOTPCREL && cast(i64, ls.dynsyms) != 0) {
-                    // S = data GOT entry vaddr for this symbol (dynamic mode only)
-                    let is *reader.ObjSym as sym = reader.sym_get(obj, rel.sym_idx);
-                    let is i64 as got_addr = get_data_got_vaddr(ls, sym.name, sym.name_len);
-                    let is i64 as value = got_addr + A - P;
+                // R_X86_64_GOTPCREL (9), GOTPCRELX (41), REX_GOTPCRELX (42): GOT-relative
+                else if (rtype == reader.R_X86_64_GOTPCREL || rtype == reader.R_X86_64_GOTPCRELX || rtype == reader.R_X86_64_REX_GOTPCRELX) {
+                    if (cast(i64, ls.dynsyms) != 0) {
+                        let is *reader.ObjSym as sym = reader.sym_get(obj, rel.sym_idx);
+                        let is i64 as got_addr = get_data_got_vaddr(ls, sym.name, sym.name_len);
+                        let is i64 as value = got_addr + A - P;
+                        target_data[buf_offset]     = cast(u8, value & 255);
+                        target_data[buf_offset + 1] = cast(u8, (value >> 8) & 255);
+                        target_data[buf_offset + 2] = cast(u8, (value >> 16) & 255);
+                        target_data[buf_offset + 3] = cast(u8, (value >> 24) & 255);
+                    } else {
+                        reader.print_str("warning: GOTPCREL relocation in static mode at ");
+                        reader.print_hex(P);
+                        reader.print_str("\n");
+                    }
+                }
+                // R_X86_64_32 (type 10): 32-bit absolute zero-extended — S + A
+                else if (rtype == reader.R_X86_64_32) {
+                    let is i64 as value = S + A;
+                    if (value > 4294967295) {
+                        reader.print_str("warning: R_X86_64_32 overflow at ");
+                        reader.print_hex(P);
+                        reader.print_str("\n");
+                    }
                     target_data[buf_offset]     = cast(u8, value & 255);
                     target_data[buf_offset + 1] = cast(u8, (value >> 8) & 255);
                     target_data[buf_offset + 2] = cast(u8, (value >> 16) & 255);
                     target_data[buf_offset + 3] = cast(u8, (value >> 24) & 255);
+                }
+                // R_X86_64_32S (type 11): 32-bit absolute sign-extended — S + A
+                else if (rtype == reader.R_X86_64_32S) {
+                    let is i64 as value = S + A;
+                    if (value > 2147483647 || value < (0 - 2147483648)) {
+                        reader.print_str("warning: R_X86_64_32S overflow at ");
+                        reader.print_hex(P);
+                        reader.print_str("\n");
+                    }
+                    target_data[buf_offset]     = cast(u8, value & 255);
+                    target_data[buf_offset + 1] = cast(u8, (value >> 8) & 255);
+                    target_data[buf_offset + 2] = cast(u8, (value >> 16) & 255);
+                    target_data[buf_offset + 3] = cast(u8, (value >> 24) & 255);
+                }
+                else {
+                    reader.print_str("warning: unhandled relocation type ");
+                    reader.print_int(rtype);
+                    reader.print_str(" at ");
+                    reader.print_hex(P);
+                    reader.print_str("\n");
                 }
             }
 
@@ -512,7 +565,7 @@ fn apply_relocations(ls as *LinkerState) as void {
 
 fn write_map(ls as *LinkerState, output_path as *u8) as void {
     let is i64 as path_len = reader.strlen(output_path);
-    let is *u8 as map_path = mem.galloc(path_len + 5);
+    let is *u8 as map_path = om.opt_alloc(path_len + 5);
     mem.memcpy(map_path, output_path, path_len);
     map_path[path_len] = 46;
     map_path[path_len + 1] = 109;
@@ -523,7 +576,7 @@ fn write_map(ls as *LinkerState, output_path as *u8) as void {
     let is i64 as fd = linux.open(map_path, 577, 420);
     if (fd < 0) {
         reader.print_str("warning: cannot create map file\n");
-        mem.gfree(map_path);
+        om.opt_free(map_path);
         return;
     }
 
@@ -547,7 +600,7 @@ fn write_map(ls as *LinkerState, output_path as *u8) as void {
     }
 
     linux.close(fd);
-    mem.gfree(map_path);
+    om.opt_free(map_path);
 }
 
 fn write_hex_to_fd(fd as i64, val as i64) as void {
@@ -599,7 +652,7 @@ struct DynSymTab {
 fn dynsym_init() as DynSymTab {
     let is DynSymTab as st;
     st.cap = 64;
-    st.data = mem.galloc(cast(i64, st.cap) * sizeof(DynSym));
+    st.data = om.opt_alloc(cast(i64, st.cap) * sizeof(DynSym));
     st.count = 0;
     return st;
 }
@@ -611,9 +664,9 @@ fn dynsym_get(st as *DynSymTab, idx as i32) as *DynSym {
 fn dynsym_add(st as *DynSymTab, name as *u8, name_len as i32) as i32 {
     if (st.count >= st.cap) {
         let is i32 as new_cap = st.cap * 2;
-        let is *u8 as new_data = mem.galloc(cast(i64, new_cap) * sizeof(DynSym));
+        let is *u8 as new_data = om.opt_alloc(cast(i64, new_cap) * sizeof(DynSym));
         mem.memcpy(new_data, st.data, cast(i64, st.count) * sizeof(DynSym));
-        mem.gfree(st.data);
+        om.opt_free(st.data);
         st.data = new_data;
         st.cap = new_cap;
     }
@@ -648,7 +701,7 @@ fn get_dynsyms(ls as *LinkerState) as *DynSymTab {
 
 // Collect undefined globals that should become dynamic symbols
 fn collect_dynamic_syms(ls as *LinkerState) as void {
-    let is *u8 as ds = mem.galloc(sizeof(DynSymTab));
+    let is *u8 as ds = om.opt_alloc(sizeof(DynSymTab));
     let is *DynSymTab as dst = cast(*DynSymTab, ds);
     let is DynSymTab as tmp = dynsym_init();
     dst.data = tmp.data;
