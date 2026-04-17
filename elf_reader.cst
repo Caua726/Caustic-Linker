@@ -433,6 +433,11 @@ struct ScanResult {
     rela_text_size as i64;
     rela_data_off as i64;
     rela_data_size as i64;
+    // .rela.<custom> sections — one per non-text/non-data rela table.
+    csec_rela_off as *u8;       // 32 * i64
+    csec_rela_size as *u8;      // 32 * i64
+    csec_rela_shndx as *u8;     // 32 * i32 — sh_info of each rela (target section's ELF shndx)
+    csec_rela_count as i32;
 }
 
 // Scan all section headers, populate ObjFile sections and ScanResult metadata.
@@ -466,6 +471,10 @@ fn parse_section_headers(data as *u8, obj as *ObjFile, sr as *ScanResult,
     sr.rela_text_size = 0;
     sr.rela_data_off = 0;
     sr.rela_data_size = 0;
+    sr.csec_rela_off    = om.opt_alloc(32 * 8);
+    sr.csec_rela_size   = om.opt_alloc(32 * 8);
+    sr.csec_rela_shndx  = om.opt_alloc(32 * 4);
+    sr.csec_rela_count  = 0;
 
     let is i64 as si with mut = 0;
     while (si < e_shnum) {
@@ -535,6 +544,22 @@ fn parse_section_headers(data as *u8, obj as *ObjFile, sr as *ScanResult,
             else if (streq_lit(name, ".rela.data") == 1) {
                 sr.rela_data_off = sh_offset;
                 sr.rela_data_size = sh_size;
+            }
+            else {
+                // .rela.<custom_section> — record sh_info (target section's
+                // ELF sh_index) so apply_relocations can find the right
+                // merged buffer.
+                if (sr.csec_rela_count < 32) {
+                    let is i64 as sh_info = read_u32(data, sh + 44);
+                    let is i32 as idx = sr.csec_rela_count;
+                    let is *i64 as off_arr  = cast(*i64, sr.csec_rela_off);
+                    let is *i64 as size_arr = cast(*i64, sr.csec_rela_size);
+                    let is *i32 as shx_arr  = cast(*i32, sr.csec_rela_shndx);
+                    off_arr[idx]  = sh_offset;
+                    size_arr[idx] = sh_size;
+                    shx_arr[idx]  = cast(i32, sh_info);
+                    sr.csec_rela_count = sr.csec_rela_count + 1;
+                }
             }
         }
 
@@ -643,10 +668,25 @@ fn read_obj(path as *u8, obj as *ObjFile) as i32 {
     let is i64 as total_relocs with mut = 0;
     if (sr.rela_text_size > 0) { total_relocs = total_relocs + sr.rela_text_size / 24; }
     if (sr.rela_data_size > 0) { total_relocs = total_relocs + sr.rela_data_size / 24; }
+    let is *i64 as csec_rela_sz_arr = cast(*i64, sr.csec_rela_size);
+    let is i32 as _cci with mut = 0;
+    while (_cci < sr.csec_rela_count) {
+        total_relocs = total_relocs + csec_rela_sz_arr[_cci] / 24;
+        _cci = _cci + 1;
+    }
     obj.relocs = om.opt_alloc((total_relocs + 1) * sizeof(ObjReloc));
 
     parse_rela_section(data, obj, sr.rela_text_off, sr.rela_text_size, SECIDX_TEXT);
     parse_rela_section(data, obj, sr.rela_data_off, sr.rela_data_size, SECIDX_DATA);
+    // Custom-section relas: section index = target ELF shndx (sh_info).
+    let is *i64 as csec_rela_off_arr = cast(*i64, sr.csec_rela_off);
+    let is *i32 as csec_rela_shx_arr = cast(*i32, sr.csec_rela_shndx);
+    _cci = 0;
+    while (_cci < sr.csec_rela_count) {
+        parse_rela_section(data, obj, csec_rela_off_arr[_cci], csec_rela_sz_arr[_cci],
+                           csec_rela_shx_arr[_cci]);
+        _cci = _cci + 1;
+    }
 
     return 0;
 }

@@ -656,6 +656,38 @@ fn apply_relocations(ls as *LinkerState) as void {
                 target_data = data_buf.data;
                 buf_offset = obj.data_offset + rel.offset;
             }
+            else if (rel.section > reader.SECIDX_BSS) {
+                // Custom section — rel.section is the source obj's ELF shndx
+                // for that section. Match by obj.csec_indices, resolve to
+                // merged csec buffer + offset.
+                let is *i32 as obj_csec_idx = cast(*i32, obj.csec_indices);
+                let is *i64 as obj_csec_offs = cast(*i64, obj.csec_offsets);
+                let is *i64 as cnp = cast(*i64, obj.csec_names);
+                let is *i32 as cnlp = cast(*i32, obj.csec_name_lens);
+                let is i32 as _rci with mut = 0;
+                while (_rci < obj.csec_count) {
+                    if (obj_csec_idx[_rci] == rel.section) {
+                        let is *i64 as ls_names = cast(*i64, ls.csec_names);
+                        let is *i32 as ls_nlens = cast(*i32, ls.csec_name_lens);
+                        let is *i64 as ls_vaddrs = cast(*i64, ls.csec_vaddrs);
+                        let is *reader.ByteBuffer as ls_bufs = cast(*reader.ByteBuffer, ls.csec_bufs);
+                        let is i32 as _mi with mut = 0;
+                        while (_mi < ls.csec_count) {
+                            if (ls_nlens[_mi] == cnlp[_rci] &&
+                                reader.streq(cast(*u8, cnp[_rci]), cnlp[_rci],
+                                             cast(*u8, ls_names[_mi]), ls_nlens[_mi]) == 1) {
+                                P = ls_vaddrs[_mi] + obj_csec_offs[_rci] + rel.offset;
+                                target_data = ls_bufs[_mi].data;
+                                buf_offset = obj_csec_offs[_rci] + rel.offset;
+                                _mi = ls.csec_count;  // break inner
+                            }
+                            _mi = _mi + 1;
+                        }
+                        _rci = obj.csec_count;  // break outer
+                    }
+                    _rci = _rci + 1;
+                }
+            }
 
             if (cast(i64, target_data) != 0) {
                 let is i64 as rtype = rel.rtype;
