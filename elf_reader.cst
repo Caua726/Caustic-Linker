@@ -272,11 +272,19 @@ struct ObjFile {
     relocs as *u8;     // array of ObjReloc
     reloc_count as i32;
 
+    // Custom sections
+    csec_data as *u8;       // array of ObjSection (up to 32)
+    csec_names as *u8;      // array of *u8 (name pointers)
+    csec_name_lens as *u8;  // array of i32
+    csec_indices as *u8;    // array of i32 (original ELF sh_index)
+    csec_count as i32;
+
     // Offsets assigned during linking (set by linker)
     text_offset as i64;    // offset of this .o's .text in merged text
     data_offset as i64;    // offset of this .o's .data in merged data
     rodata_offset as i64;  // offset of this .o's .rodata in merged rodata
     bss_offset as i64;     // offset of this .o's .bss in merged bss
+    csec_offsets as *u8;   // array of i64 (per custom section merge offset)
 }
 
 // ============================================================
@@ -441,6 +449,12 @@ fn parse_section_headers(data as *u8, obj as *ObjFile, sr as *ScanResult,
     obj.data_sec.size = 0;
     obj.rodata.data = cast(*u8, 0);
     obj.rodata.size = 0;
+    obj.csec_count = 0;
+    obj.csec_data = om.opt_alloc(32 * sizeof(ObjSection));
+    obj.csec_names = om.opt_alloc(32 * 8);
+    obj.csec_name_lens = om.opt_alloc(32 * 4);
+    obj.csec_indices = om.opt_alloc(32 * 4);
+    obj.csec_offsets = om.opt_alloc(32 * 8);
 
     sr.symtab_off = 0;
     sr.symtab_size = 0;
@@ -478,6 +492,23 @@ fn parse_section_headers(data as *u8, obj as *ObjFile, sr as *ScanResult,
                 obj.rodata.data = cast(*u8, cast(i64, data) + sh_offset);
                 obj.rodata.size = sh_size;
                 obj.rodata.sh_offset = sh_offset;
+            }
+            else {
+                // Custom section — store it
+                if (obj.csec_count < 32) {
+                    let is i32 as ci = obj.csec_count;
+                    let is *ObjSection as cs = cast(*ObjSection, cast(i64, obj.csec_data) + cast(i64, ci) * sizeof(ObjSection));
+                    cs.data = cast(*u8, cast(i64, data) + sh_offset);
+                    cs.size = sh_size;
+                    cs.sh_offset = sh_offset;
+                    let is *i64 as np = cast(*i64, cast(i64, obj.csec_names) + cast(i64, ci) * 8);
+                    *np = cast(i64, name);
+                    let is *i32 as nlp = cast(*i32, cast(i64, obj.csec_name_lens) + cast(i64, ci) * 4);
+                    *nlp = cstrlen(name);
+                    let is *i32 as idxp = cast(*i32, cast(i64, obj.csec_indices) + cast(i64, ci) * 4);
+                    *idxp = cast(i32, si);
+                    obj.csec_count = obj.csec_count + 1;
+                }
             }
         }
         else if (sh_type == cast(i64, SHT_NOBITS)) {

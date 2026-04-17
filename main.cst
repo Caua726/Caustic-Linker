@@ -95,6 +95,7 @@ fn print_usage() as void {
     print_out("  --strip            Remove symbol table from output\n");
     print_out("  --map              Generate map file (<output>.map)\n");
     print_out("  --keep-empty       Include empty sections in output\n");
+    print_out("  --freestanding     Skip _start stub (for kernels/bare-metal)\n");
     print_out("  -v                 Verbose output\n");
 }
 
@@ -154,6 +155,14 @@ fn lib_to_soname(name as *u8) as *u8 {
 }
 
 // ============================================================
+// Globals for integrated pipeline (set by compiler before calling link_objs)
+// ============================================================
+
+let is i32 as g_freestanding with mut = 0;
+let is i64 as g_entry_name with mut = 0;   // *u8 or 0 for default ("main")
+let is i64 as g_base_addr with mut = 0;    // 0 = use default (0x400000)
+
+// ============================================================
 // Library entry point (for integrated pipeline)
 // ============================================================
 
@@ -183,12 +192,19 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
     }
 
     // Initialize linker state
-    let is linker.LinkerState as ls = linker.linker_init(4194304);
-    ls.entry_name = "main";
+    let is i64 as init_base with mut = 4194304;
+    if (g_base_addr != 0) { init_base = g_base_addr; }
+    let is linker.LinkerState as ls = linker.linker_init(init_base);
+    if (g_entry_name != 0) {
+        ls.entry_name = cast(*u8, g_entry_name);
+    } else {
+        ls.entry_name = "main";
+    }
     ls.verbose = 0;
     ls.do_strip = 0;
     ls.do_map = 0;
     ls.keep_empty = 0;
+    ls.freestanding = g_freestanding;
 
     // Store needed libs
     if (lib_count > 0) {
@@ -270,6 +286,7 @@ fn main(argc as i64, argv as i64) as i32 {
     let is i32 as do_strip with mut = 0;
     let is i32 as do_map with mut = 0;
     let is i32 as keep_empty with mut = 0;
+    let is i32 as freestanding with mut = 0;
 
     // Collect input file paths (max 256)
     let is [256]i64 as input_files;
@@ -304,6 +321,9 @@ fn main(argc as i64, argv as i64) as i32 {
         }
         else if (streq_lit(arg, "--keep-empty") == 1) {
             keep_empty = 1;
+        }
+        else if (streq_lit(arg, "--freestanding") == 1) {
+            freestanding = 1;
         }
         else if (streq_lit(arg, "-v") == 1) {
             verbose = 1;
@@ -364,6 +384,7 @@ fn main(argc as i64, argv as i64) as i32 {
     ls.do_strip = do_strip;
     ls.do_map = do_map;
     ls.keep_empty = keep_empty;
+    ls.freestanding = freestanding;
 
     // Store needed libs (convert raw names to sonames)
     if (needed_count > 0) {
