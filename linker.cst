@@ -102,6 +102,15 @@ struct LinkerState {
     do_strip as i32;
     do_map as i32;
     keep_empty as i32;
+    freestanding as i32;
+
+    // Custom sections (merged)
+    csec_bufs as *u8;      // array of *reader.ByteBuffer (up to 32)
+    csec_names as *u8;     // array of *u8 name pointers
+    csec_name_lens as *u8; // array of i32
+    csec_sizes as *u8;     // array of i64
+    csec_vaddrs as *u8;    // array of i64
+    csec_count as i32;
 
     // Dynamic linking
     needed_libs as *u8;     // array of *u8 c-strings (lib names like "libc.so.6")
@@ -171,6 +180,7 @@ fn linker_init(base_addr as i64) as LinkerState {
     ls.do_strip = 0;
     ls.do_map = 0;
     ls.keep_empty = 0;
+    ls.freestanding = 0;
     ls.needed_libs = cast(*u8, 0);
     ls.needed_count = 0;
     ls.dynsyms = cast(*u8, 0);
@@ -184,6 +194,12 @@ fn linker_init(base_addr as i64) as LinkerState {
     ls.dynamic_buf = cast(*u8, 0);
     ls.data_got_buf = cast(*u8, 0);
     ls.reladyn_buf = cast(*u8, 0);
+    ls.csec_bufs = om.opt_alloc(32 * sizeof(reader.ByteBuffer));
+    ls.csec_names = om.opt_alloc(32 * 8);
+    ls.csec_name_lens = om.opt_alloc(32 * 4);
+    ls.csec_sizes = om.opt_alloc(32 * 8);
+    ls.csec_vaddrs = om.opt_alloc(32 * 8);
+    ls.csec_count = 0;
     return ls;
 }
 
@@ -231,12 +247,39 @@ fn emit_start_stub(buf as *reader.ByteBuffer) as void {
 // Phase 1: Merge sections
 // ============================================================
 
+// Find or create a merged custom section by name. Returns index into ls.csec_* arrays.
+fn csec_find_or_add(ls as *LinkerState, name as *u8, name_len as i32) as i32 {
+    let is *i64 as names = cast(*i64, ls.csec_names);
+    let is *i32 as nlens = cast(*i32, ls.csec_name_lens);
+    let is i32 as i with mut = 0;
+    while (i < ls.csec_count) {
+        if (nlens[i] == name_len && reader.streq(name, cast(i32, nlens[i]), cast(*u8, names[i]), nlens[i]) == 1) {
+            return i;
+        }
+        i = i + 1;
+    }
+    // Create new
+    if (ls.csec_count >= 32) { return 0; }
+    let is i32 as idx = ls.csec_count;
+    names[idx] = cast(i64, name);
+    nlens[idx] = name_len;
+    // Allocate a ByteBuffer for this section
+    let is *reader.ByteBuffer as bufs = cast(*reader.ByteBuffer, ls.csec_bufs);
+    bufs[idx] = reader.buf_init(4096);
+    let is *i64 as sizes = cast(*i64, ls.csec_sizes);
+    sizes[idx] = 0;
+    ls.csec_count = ls.csec_count + 1;
+    return idx;
+}
+
 fn merge_sections(ls as *LinkerState) as void {
     let is *reader.ByteBuffer as text_buf = get_text(ls);
     let is *reader.ByteBuffer as rodata_buf = get_rodata(ls);
     let is *reader.ByteBuffer as data_buf = get_data(ls);
 
-    emit_start_stub(text_buf);
+    if (ls.freestanding == 0) {
+        emit_start_stub(text_buf);
+    }
 
     let is i32 as i with mut = 0;
     while (i < ls.obj_count) {
@@ -260,12 +303,36 @@ fn merge_sections(ls as *LinkerState) as void {
         obj.bss_offset = ls.bss_total;
         ls.bss_total = ls.bss_total + obj.bss_size;
 
+        // Merge custom sections
+        let is *i64 as obj_csec_offs = cast(*i64, obj.csec_offsets);
+        let is i32 as ci with mut = 0;
+        while (ci < obj.csec_count) {
+            let is *i64 as cnp = cast(*i64, cast(i64, obj.csec_names) + cast(i64, ci) * 8);
+            let is *i32 as cnlp = cast(*i32, cast(i64, obj.csec_name_lens) + cast(i64, ci) * 4);
+            let is i32 as midx = csec_find_or_add(ls, cast(*u8, *cnp), *cnlp);
+            let is *reader.ByteBuffer as mbufs = cast(*reader.ByteBuffer, ls.csec_bufs);
+            obj_csec_offs[ci] = mbufs[midx].len;
+            let is *reader.ObjSection as cs = cast(*reader.ObjSection, cast(i64, obj.csec_data) + cast(i64, ci) * sizeof(reader.ObjSection));
+            if (cs.size > 0) {
+                reader.buf_append(&mbufs[midx], cs.data, cs.size);
+            }
+            ci = ci + 1;
+        }
+
         i = i + 1;
     }
 
     ls.text_size = text_buf.len;
     ls.rodata_size = rodata_buf.len;
     ls.data_size = data_buf.len;
+    // Record final custom section sizes
+    let is *i64 as csizes = cast(*i64, ls.csec_sizes);
+    let is *reader.ByteBuffer as mbufs = cast(*reader.ByteBuffer, ls.csec_bufs);
+    let is i32 as ci with mut = 0;
+    while (ci < ls.csec_count) {
+        csizes[ci] = mbufs[ci].len;
+        ci = ci + 1;
+    }
 }
 
 // ============================================================
@@ -282,8 +349,21 @@ fn assign_addresses(ls as *LinkerState) as void {
         rw_start = rx_end + 4096 - (rx_end % 4096);
     }
     ls.rodata_vaddr = rw_start;
-    ls.data_vaddr = rw_start + ls.rodata_size;
-    ls.bss_vaddr = ls.data_vaddr + ls.data_size;
+    // Align .data to 8 bytes after .rodata (use mask, not modulo, for higher-half addresses)
+    let is i64 as data_start = (rw_start + ls.rodata_size + 7) & (0 - 8);
+    ls.data_vaddr = data_start;
+    // Custom sections between .data and .bss (file-backed, before bss which has no file data)
+    let is i64 as csec_addr with mut = ls.data_vaddr + ls.data_size;
+    let is *i64 as cvaddrs = cast(*i64, ls.csec_vaddrs);
+    let is *i64 as csizes = cast(*i64, ls.csec_sizes);
+    let is i32 as ci with mut = 0;
+    while (ci < ls.csec_count) {
+        csec_addr = (csec_addr + 7) & (0 - 8);
+        cvaddrs[ci] = csec_addr;
+        csec_addr = csec_addr + csizes[ci];
+        ci = ci + 1;
+    }
+    ls.bss_vaddr = csec_addr;
 }
 
 // ============================================================
@@ -304,12 +384,112 @@ fn resolve_sym_vaddr(ls as *LinkerState, obj as *reader.ObjFile,
     if (section == reader.SECIDX_BSS) {
         return ls.bss_vaddr + obj.bss_offset + value;
     }
+    // Custom sections: match by ELF sh_index stored in obj.csec_indices
+    if (section > reader.SECIDX_BSS) {
+        let is *i32 as obj_csec_idx = cast(*i32, obj.csec_indices);
+        let is *i64 as obj_csec_offs = cast(*i64, obj.csec_offsets);
+        let is *i64 as cnp = cast(*i64, obj.csec_names);
+        let is *i32 as cnlp = cast(*i32, obj.csec_name_lens);
+        let is i32 as ci with mut = 0;
+        while (ci < obj.csec_count) {
+            if (obj_csec_idx[ci] == section) {
+                // Find the merged section by name
+                let is *i64 as ls_names = cast(*i64, ls.csec_names);
+                let is *i32 as ls_nlens = cast(*i32, ls.csec_name_lens);
+                let is *i64 as ls_vaddrs = cast(*i64, ls.csec_vaddrs);
+                let is i32 as mi with mut = 0;
+                while (mi < ls.csec_count) {
+                    if (ls_nlens[mi] == cnlp[ci] && reader.streq(cast(*u8, cnp[ci]), cnlp[ci], cast(*u8, ls_names[mi]), ls_nlens[mi]) == 1) {
+                        return ls_vaddrs[mi] + obj_csec_offs[ci] + value;
+                    }
+                    mi = mi + 1;
+                }
+            }
+            ci = ci + 1;
+        }
+    }
     return 0;
+}
+
+// Build a C-identifier-safe name of the form "<prefix><section>" by
+// stripping a leading '.' from the section name and replacing any
+// remaining '.' with '_'. Returns the newly-allocated name buffer and
+// writes the total length through out_len.
+fn make_bound_sym_name(prefix as *u8, prefix_len as i32,
+                       sec_name as *u8, sec_len as i32,
+                       out_len as *i32) as *u8 {
+    let is *u8 as src with mut = sec_name;
+    let is i32 as src_len with mut = sec_len;
+    if (src_len > 0 && *src == 46) {       // '.'
+        src = cast(*u8, cast(i64, src) + 1);
+        src_len = src_len - 1;
+    }
+    let is i32 as total = prefix_len + src_len;
+    let is *u8 as buf = om.opt_alloc(cast(i64, total + 1));
+    mem.memcpy(buf, prefix, cast(i64, prefix_len));
+    let is i32 as i with mut = 0;
+    while (i < src_len) {
+        let is *u8 as sp = cast(*u8, cast(i64, src) + cast(i64, i));
+        let is *u8 as dp = cast(*u8, cast(i64, buf) + cast(i64, prefix_len + i));
+        if (*sp == 46) { *dp = cast(u8, 95); }   // '.' -> '_'
+        else { *dp = *sp; }
+        i = i + 1;
+    }
+    let is *u8 as term = cast(*u8, cast(i64, buf) + cast(i64, total));
+    *term = cast(u8, 0);
+    *out_len = total;
+    return buf;
+}
+
+// Inject __start_<name> and __stop_<name> synthetic global symbols for
+// every merged custom section. Callers that reference these names in
+// source (e.g. `&__start_bus_types`) now resolve through the normal
+// name-based relocation path.
+fn synthesize_section_bounds_syms(ls as *LinkerState, gsyms as *GlobalSymTab) as void {
+    let is *i64 as names  = cast(*i64, ls.csec_names);
+    let is *i32 as nlens  = cast(*i32, ls.csec_name_lens);
+    let is *i64 as vaddrs = cast(*i64, ls.csec_vaddrs);
+    let is *i64 as sizes  = cast(*i64, ls.csec_sizes);
+
+    let is [8]u8 as start_prefix;
+    start_prefix[0] = cast(u8, 95);  start_prefix[1] = cast(u8, 95);   // _ _
+    start_prefix[2] = cast(u8, 115); start_prefix[3] = cast(u8, 116);  // s t
+    start_prefix[4] = cast(u8, 97);  start_prefix[5] = cast(u8, 114);  // a r
+    start_prefix[6] = cast(u8, 116); start_prefix[7] = cast(u8, 95);   // t _
+
+    let is [7]u8 as stop_prefix;
+    stop_prefix[0] = cast(u8, 95);  stop_prefix[1] = cast(u8, 95);    // _ _
+    stop_prefix[2] = cast(u8, 115); stop_prefix[3] = cast(u8, 116);   // s t
+    stop_prefix[4] = cast(u8, 111); stop_prefix[5] = cast(u8, 112);   // o p
+    stop_prefix[6] = cast(u8, 95);                                    // _
+
+    let is i32 as ci with mut = 0;
+    while (ci < ls.csec_count) {
+        let is *u8 as sec_name = cast(*u8, names[ci]);
+        let is i32 as sec_len = nlens[ci];
+        let is i64 as sec_vaddr = vaddrs[ci];
+        let is i64 as sec_size = sizes[ci];
+
+        let is i32 as start_len with mut = 0;
+        let is *u8 as start_name = make_bound_sym_name(
+            cast(*u8, &start_prefix), 8, sec_name, sec_len, &start_len);
+        gsym_add(gsyms, start_name, start_len, 0, sec_vaddr, cast(i32, 0 - 1), 1);
+
+        let is i32 as stop_len with mut = 0;
+        let is *u8 as stop_name = make_bound_sym_name(
+            cast(*u8, &stop_prefix), 7, sec_name, sec_len, &stop_len);
+        gsym_add(gsyms, stop_name, stop_len, 0, sec_vaddr + sec_size, cast(i32, 0 - 1), 1);
+
+        ci = ci + 1;
+    }
 }
 
 fn build_symtab(ls as *LinkerState) as i32 {
     let is i32 as errors with mut = 0;
     let is *GlobalSymTab as gsyms = get_gsyms(ls);
+
+    synthesize_section_bounds_syms(ls, gsyms);
+
     let is i32 as i with mut = 0;
 
     while (i < ls.obj_count) {
@@ -383,17 +563,20 @@ fn build_symtab(ls as *LinkerState) as i32 {
 
     let is i64 as main_vaddr = entry_sym.vaddr;
 
-    // Patch _start stub
-    let is *reader.ByteBuffer as text_buf = get_text(ls);
-    let is i64 as call_site = ls.text_vaddr + cast(i64, START_STUB_REL32_OFF) + 4;
-    let is i64 as rel32 = main_vaddr - call_site;
-    let is *u8 as tdata = text_buf.data;
-    tdata[START_STUB_REL32_OFF]     = cast(u8, rel32 & 255);
-    tdata[START_STUB_REL32_OFF + 1] = cast(u8, (rel32 >> 8) & 255);
-    tdata[START_STUB_REL32_OFF + 2] = cast(u8, (rel32 >> 16) & 255);
-    tdata[START_STUB_REL32_OFF + 3] = cast(u8, (rel32 >> 24) & 255);
-
-    ls.entry_vaddr = ls.text_vaddr;
+    if (ls.freestanding == 0) {
+        // Patch _start stub
+        let is *reader.ByteBuffer as text_buf = get_text(ls);
+        let is i64 as call_site = ls.text_vaddr + cast(i64, START_STUB_REL32_OFF) + 4;
+        let is i64 as rel32 = main_vaddr - call_site;
+        let is *u8 as tdata = text_buf.data;
+        tdata[START_STUB_REL32_OFF]     = cast(u8, rel32 & 255);
+        tdata[START_STUB_REL32_OFF + 1] = cast(u8, (rel32 >> 8) & 255);
+        tdata[START_STUB_REL32_OFF + 2] = cast(u8, (rel32 >> 16) & 255);
+        tdata[START_STUB_REL32_OFF + 3] = cast(u8, (rel32 >> 24) & 255);
+        ls.entry_vaddr = ls.text_vaddr;
+    } else {
+        ls.entry_vaddr = main_vaddr;
+    }
 
     return errors;
 }
