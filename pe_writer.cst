@@ -1,0 +1,26 @@
+use "../std/linux.cst" as linux;
+use "elf_reader.cst" as reader;
+use "linker.cst" as linker;
+
+// ============================================================
+// pe_writer.cst — PE32+ executable writer (Windows x86_64)
+//
+// Fase 0 stub. Full implementation lands across Fases 1-4 of the
+// Windows port plan:
+//
+//   Fase 1: DOS stub + PE signature + COFF header + Optional Header
+//           + section table + bare-minimum import table for ExitProcess
+//   Fase 2: full import table construction (lld-style direct-to-memory,
+//           skipping .idata$N chunks), .cstimport directive consumption
+//   Fase 3: SEH .pdata/.xdata, ASLR + .reloc section, __chkstk emission,
+//           entry stub with GetCommandLineA + parse_argv
+//   Fase 4: CodeView .debug$S/.debug$T + paired .pdb file
+//
+// Signature mirrors elf_writer.write_executable.
+// ============================================================
+
+fn write_pe_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
+    linux.write(linux.STDERR, "caustic-ld: PE writer not yet implemented (Fase 1+)\n", 52);
+    linux.exit(1);
+    return 1;
+}

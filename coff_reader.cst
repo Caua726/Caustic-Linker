@@ -1,0 +1,20 @@
+use "../std/linux.cst" as linux;
+use "elf_reader.cst" as reader;
+
+// ============================================================
+// coff_reader.cst — PE/COFF object file reader
+//
+// Fase 0 stub. Real implementation in Fase 2: parses .obj produced
+// by caustic-as in COFF mode and populates reader.ObjFile so the
+// linker's relocation engine, gsym resolver, and section merger
+// work without per-format branching. IMAGE_REL_AMD64_* relocation
+// codes are translated to R_X86_64_* on the way in, keeping the
+// core linker logic ELF-coded internally.
+//
+// Signature mirrors reader.read_obj.
+// ============================================================
+
+fn read_coff_obj(path as *u8, obj as *reader.ObjFile) as i32 {
+    linux.write(linux.STDERR, "caustic-ld: COFF reader not yet implemented (Fase 2)\n", 53);
+    return 1;
+}
