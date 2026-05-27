@@ -1,6 +1,7 @@
 use "../std/mem.cst" as mem;
 use "../std/linux.cst" as linux;
 use "../src/ir/opt_mem.cst" as om;
+use "../src/codegen/target.cst" as tgt;
 use "elf_reader.cst" as reader;
 
 // ============================================================
@@ -126,6 +127,15 @@ struct LinkerState {
     dynamic_buf as *u8;     // *reader.ByteBuffer — .dynamic
     data_got_buf as *u8;    // *reader.ByteBuffer — .got (for GOTPCREL data globals)
     reladyn_buf as *u8;     // *reader.ByteBuffer — .rela.dyn (GLOB_DAT entries)
+
+    // PE/Windows imports — collected from .cstimport custom section of each
+    // input .obj during link. The PE writer groups by DLL and emits the
+    // import table, ILT, IAT, hint/name table. Each entry is one (dll, sym).
+    cstimport_dll_ptrs as *u8;  // 1024 * 8 — *u8 dll name (in obj file memory)
+    cstimport_dll_lens as *u8;  // 1024 * 4 — i32 dll name length
+    cstimport_sym_ptrs as *u8;  // 1024 * 8 — *u8 sym name
+    cstimport_sym_lens as *u8;  // 1024 * 4 — i32 sym name length
+    cstimport_count as i32;
 }
 
 fn alloc_bytebuf(cap as i64) as *u8 {
@@ -200,7 +210,100 @@ fn linker_init(base_addr as i64) as LinkerState {
     ls.csec_sizes = om.opt_alloc(32 * 8);
     ls.csec_vaddrs = om.opt_alloc(32 * 8);
     ls.csec_count = 0;
+    ls.cstimport_dll_ptrs = om.opt_alloc(1024 * 8);
+    ls.cstimport_dll_lens = om.opt_alloc(1024 * 4);
+    ls.cstimport_sym_ptrs = om.opt_alloc(1024 * 8);
+    ls.cstimport_sym_lens = om.opt_alloc(1024 * 4);
+    ls.cstimport_count = 0;
     return ls;
+}
+
+// Read a little-endian u32 from a byte buffer at offset off.
+fn read_u32_le(buf as *u8, off as i64) as i64 {
+    let is i64 as b0 = cast(i64, buf[off]);
+    let is i64 as b1 = cast(i64, buf[off + 1]);
+    let is i64 as b2 = cast(i64, buf[off + 2]);
+    let is i64 as b3 = cast(i64, buf[off + 3]);
+    return b0 + (b1 << 8) + (b2 << 16) + (b3 << 24);
+}
+
+// Compare two byte ranges for equality.
+fn bytes_eq(a as *u8, a_len as i32, b as *u8, b_len as i32) as i32 {
+    if (a_len != b_len) { return 0; }
+    let is i32 as i with mut = 0;
+    while (i < a_len) {
+        if (a[i] != b[i]) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+// Parse the ".cstimport" custom section from one ObjFile (if present) and
+// accumulate its entries into ls.cstimport_*. Each entry adds one (dll, sym)
+// pair; duplicates across objects collapse via add_cstimport's dedup check.
+// Format per Fase 2.4:
+//   u32 count
+//   for each: u32 dll_len, u32 sym_len, bytes[dll_len], bytes[sym_len]
+fn add_cstimport(ls as *LinkerState, dll as *u8, dll_len as i32, sym as *u8, sym_len as i32) as void {
+    if (ls.cstimport_count >= 1024) { return; }
+    let is *i64 as dp = cast(*i64, ls.cstimport_dll_ptrs);
+    let is *i32 as dl = cast(*i32, ls.cstimport_dll_lens);
+    let is *i64 as sp = cast(*i64, ls.cstimport_sym_ptrs);
+    let is *i32 as sl = cast(*i32, ls.cstimport_sym_lens);
+    let is i32 as i with mut = 0;
+    while (i < ls.cstimport_count) {
+        if (bytes_eq(cast(*u8, dp[i]), dl[i], dll, dll_len) == 1
+            && bytes_eq(cast(*u8, sp[i]), sl[i], sym, sym_len) == 1) {
+            return;
+        }
+        i = i + 1;
+    }
+    let is i32 as idx = ls.cstimport_count;
+    dp[idx] = cast(i64, dll);
+    dl[idx] = dll_len;
+    sp[idx] = cast(i64, sym);
+    sl[idx] = sym_len;
+    ls.cstimport_count = ls.cstimport_count + 1;
+}
+
+fn collect_cstimports_from(ls as *LinkerState, obj as *reader.ObjFile) as void {
+    // Find ".cstimport" in obj.csec_*
+    let is *i64 as names = cast(*i64, obj.csec_names);
+    let is *i32 as nlens = cast(*i32, obj.csec_name_lens);
+    let is i32 as i with mut = 0;
+    while (i < obj.csec_count) {
+        let is *u8 as nm = cast(*u8, names[i]);
+        if (bytes_eq(nm, nlens[i], ".cstimport", 10) == 1) {
+            let is *reader.ObjSection as sec = cast(*reader.ObjSection,
+                cast(i64, obj.csec_data) + cast(i64, i) * sizeof(reader.ObjSection));
+            let is *u8 as buf = sec.data;
+            let is i64 as sz = sec.size;
+            if (sz < 4) { return; }
+            let is i64 as count = read_u32_le(buf, 0);
+            let is i64 as off with mut = 4;
+            let is i64 as k with mut = 0;
+            while (k < count && off + 8 <= sz) {
+                let is i64 as dll_len = read_u32_le(buf, off);
+                let is i64 as sym_len = read_u32_le(buf, off + 4);
+                off = off + 8;
+                if (off + dll_len + sym_len > sz) { return; }
+                add_cstimport(ls, cast(*u8, cast(i64, buf) + off), cast(i32, dll_len),
+                              cast(*u8, cast(i64, buf) + off + dll_len), cast(i32, sym_len));
+                off = off + dll_len + sym_len;
+                k = k + 1;
+            }
+            return;
+        }
+        i = i + 1;
+    }
+}
+
+fn collect_all_cstimports(ls as *LinkerState) as void {
+    let is i32 as i with mut = 0;
+    while (i < ls.obj_count) {
+        collect_cstimports_from(ls, get_obj(ls, i));
+        i = i + 1;
+    }
 }
 
 fn get_obj(ls as *LinkerState, idx as i32) as *reader.ObjFile {
@@ -277,7 +380,12 @@ fn merge_sections(ls as *LinkerState) as void {
     let is *reader.ByteBuffer as rodata_buf = get_rodata(ls);
     let is *reader.ByteBuffer as data_buf = get_data(ls);
 
-    if (ls.freestanding == 0) {
+    // Linux _start stub: emit only for ELF targets. Windows PE has its own
+    // entry conventions (no argc/argv on stack) — pe_writer.cst handles the
+    // entry stub separately, and for the simple Fase 2 path we just point
+    // AddressOfEntryPoint directly at main.
+    let is *tgt.Target as t = tgt.target_get();
+    if (ls.freestanding == 0 && t.object_format != 2) {
         emit_start_stub(text_buf);
     }
 
@@ -563,7 +671,13 @@ fn build_symtab(ls as *LinkerState) as i32 {
 
     let is i64 as main_vaddr = entry_sym.vaddr;
 
-    if (ls.freestanding == 0) {
+    // Patch the Linux _start stub's relative call to main, but ONLY when
+    // we actually emitted one (i.e. ELF target with freestanding=0). For
+    // Windows PE we skipped emit_start_stub in merge_sections, so the
+    // bytes at offset START_STUB_REL32_OFF are part of main's prologue
+    // and must not be overwritten — entry just points at main directly.
+    let is *tgt.Target as t_bs = tgt.target_get();
+    if (ls.freestanding == 0 && t_bs.object_format != 2) {
         // Patch _start stub
         let is *reader.ByteBuffer as text_buf = get_text(ls);
         let is i64 as call_site = ls.text_vaddr + cast(i64, START_STUB_REL32_OFF) + 4;

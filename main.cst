@@ -4,6 +4,7 @@ use "../src/ir/opt_mem.cst" as om;
 use "elf_reader.cst" as reader;
 use "linker.cst" as linker;
 use "elf_writer.cst" as writer;
+use "pe_writer.cst" as pew;
 use "../src/codegen/target.cst" as tgt;
 
 // ============================================================
@@ -192,8 +193,10 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
         fi = fi + 1;
     }
 
-    // Initialize linker state
-    let is i64 as init_base with mut = 4194304;
+    // Initialize linker state. Windows PE uses 0x140000000 by default.
+    let is i64 as init_base with mut = 4194304;  // 0x400000 (Linux ELF default)
+    let is *tgt.Target as t_init = tgt.target_get();
+    if (t_init.object_format == 2) { init_base = 5368709120; }  // 0x140000000
     if (g_base_addr != 0) { init_base = g_base_addr; }
     let is linker.LinkerState as ls = linker.linker_init(init_base);
     if (g_entry_name != 0) {
@@ -255,7 +258,14 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
 
     let is i32 as write_err with mut = 0;
 
-    if (ls.needed_count > 0) {
+    // PE/Windows path: collect .cstimport entries, dispatch to PE writer
+    // which handles apply_relocations internally (it must run AFTER
+    // __imp_<sym> gsyms are registered so PC32 reloc resolves to IAT).
+    let is *tgt.Target as t = tgt.target_get();
+    if (t.object_format == 2) {
+        linker.collect_all_cstimports(&ls);
+        write_err = pew.write_pe_executable(&ls, output_path);
+    } else if (ls.needed_count > 0) {
         linker.collect_dynamic_syms(&ls);
         linker.alloc_dynamic_bufs(&ls);
         write_err = writer.write_dynamic_executable(&ls, output_path);
@@ -324,10 +334,7 @@ fn main(argc as i64, argv as i64) as i32 {
                 print_str("caustic-ld: unknown --target\n");
                 return 1;
             }
-            if (tgt.str_eq_local(triple, tlen, "windows-x86_64", 14) == 1) {
-                print_str("caustic-ld: windows-x86_64 not yet implemented\n");
-                return 1;
-            }
+            // windows-x86_64 is now wired up via pe_writer.cst (Fase 2.5+).
         }
         else if (streq_lit(arg, "--strip") == 1) {
             do_strip = 1;
@@ -393,7 +400,12 @@ fn main(argc as i64, argv as i64) as i32 {
         print_str(" object file(s)\n");
     }
 
-    // Initialize linker state
+    // Initialize linker state. Windows PE uses 0x140000000 as ImageBase
+    // unless --base= was explicitly set.
+    let is *tgt.Target as t_main_init = tgt.target_get();
+    if (t_main_init.object_format == 2 && base_addr == 4194304) {
+        base_addr = 5368709120;  // 0x140000000
+    }
     let is linker.LinkerState as ls = linker.linker_init(base_addr);
     ls.entry_name = entry_name;
     ls.verbose = verbose;
@@ -498,7 +510,12 @@ fn main(argc as i64, argv as i64) as i32 {
 
     let is i32 as write_err with mut = 0;
 
-    if (ls.needed_count > 0) {
+    // PE/Windows path: collect cstimport from objects, dispatch to PE writer.
+    let is *tgt.Target as t_main = tgt.target_get();
+    if (t_main.object_format == 2) {
+        linker.collect_all_cstimports(&ls);
+        write_err = pew.write_pe_executable(&ls, output_path);
+    } else if (ls.needed_count > 0) {
         // Dynamic linking path
         if (verbose == 1) {
             print_str("  dynamic linking mode (");
