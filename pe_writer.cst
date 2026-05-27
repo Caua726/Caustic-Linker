@@ -5,22 +5,267 @@ use "linker.cst" as linker;
 // ============================================================
 // pe_writer.cst — PE32+ executable writer (Windows x86_64)
 //
-// Fase 0 stub. Full implementation lands across Fases 1-4 of the
-// Windows port plan:
+// Fase 1: write_minimal_exit42(fd) produces a complete, hardcoded PE
+// executable whose entry point does ExitProcess(42). Verifies the
+// binary format machinery (DOS header, PE/COFF, optional header,
+// section table, import table, IAT, ILT, hint/name table) before
+// wiring into the real linker pipeline in Fase 2+.
 //
-//   Fase 1: DOS stub + PE signature + COFF header + Optional Header
-//           + section table + bare-minimum import table for ExitProcess
-//   Fase 2: full import table construction (lld-style direct-to-memory,
-//           skipping .idata$N chunks), .cstimport directive consumption
-//   Fase 3: SEH .pdata/.xdata, ASLR + .reloc section, __chkstk emission,
-//           entry stub with GetCommandLineA + parse_argv
-//   Fase 4: CodeView .debug$S/.debug$T + paired .pdb file
+// Layout (file → virtual):
+//   0x00..0x80   DOS header + DOS stub
+//   0x80..0x84   PE\0\0 signature
+//   0x84..0x98   COFF file header (20 bytes)
+//   0x98..0x188  Optional header PE32+ (240 bytes)
+//   0x188..0x1D8 Section table (2 sections × 40 bytes)
+//   0x1D8..0x200 zero pad to FileAlignment
+//   0x200..0x400 .text raw (RVA 0x1000)
+//   0x400..0x600 .idata raw (RVA 0x2000): IAT + IID + ILT + hint/name + DLL name
 //
-// Signature mirrors elf_writer.write_executable.
+//   SizeOfImage = 0x3000, ImageBase = 0x140000000, Subsystem = CUI (3)
+//   ASLR disabled (Fase 3 adds DYNAMIC_BASE + .reloc section).
+//
+// write_pe_executable() — full pipeline entry — stays a stub for Fase 2.
 // ============================================================
 
+// === PE/COFF constants ===
+let is i32 as IMAGE_FILE_MACHINE_AMD64 with imut = 34404;   // 0x8664
+let is i32 as IMAGE_FILE_EXECUTABLE_IMAGE with imut = 2;
+let is i32 as IMAGE_FILE_LARGE_ADDRESS_AWARE with imut = 32;  // 0x20
+let is i32 as PE_OPT_MAGIC_PE32PLUS with imut = 523;        // 0x20B
+let is i32 as IMAGE_SUBSYSTEM_WINDOWS_CUI with imut = 3;
+let is i64 as IMAGE_SCN_CNT_CODE with imut = 32;            // 0x00000020
+let is i64 as IMAGE_SCN_CNT_INITIALIZED_DATA with imut = 64; // 0x00000040
+let is i64 as IMAGE_SCN_MEM_EXECUTE with imut = 536870912;   // 0x20000000
+let is i64 as IMAGE_SCN_MEM_READ with imut = 1073741824;     // 0x40000000
+let is i64 as IMAGE_SCN_MEM_WRITE with imut = 2147483648;    // 0x80000000
+
+// File / section layout for the minimal exe
+let is i64 as FILE_ALIGN with imut = 512;       // 0x200
+let is i64 as SECTION_ALIGN with imut = 4096;   // 0x1000
+let is i64 as IMAGE_BASE with imut = 5368709120; // 0x140000000
+
+// Headers end at 0x1D8 → padded to FILE_ALIGN = 0x200.
+let is i64 as HEADERS_FILE_SIZE with imut = 512;   // 0x200
+let is i64 as SIZE_OF_HEADERS with imut = 512;     // value written into opt header
+
+// .text: RVA 0x1000, raw at file 0x200, raw size 0x200 (one page padded)
+let is i64 as TEXT_RVA with imut = 4096;          // 0x1000
+let is i64 as TEXT_FILE with imut = 512;          // 0x200
+let is i64 as TEXT_RAW_SIZE with imut = 512;      // 0x200
+let is i64 as TEXT_VIRT_SIZE with imut = 16;      // sub rsp + mov ecx + call = 4+5+6 + room
+
+// .idata: RVA 0x2000, raw at file 0x400, raw size 0x200
+let is i64 as IDATA_RVA with imut = 8192;         // 0x2000
+let is i64 as IDATA_FILE with imut = 1024;        // 0x400
+let is i64 as IDATA_RAW_SIZE with imut = 512;     // 0x200
+
+// SizeOfImage covers up to end of last section's virtual area, aligned
+let is i64 as SIZE_OF_IMAGE with imut = 12288;    // 0x3000 (idata + section_align)
+
+// Layout inside .idata (offsets relative to IDATA_RVA):
+//   0x00  IAT slot for ExitProcess (8 bytes) + null (8 bytes) = 16
+//   0x10  IID for kernel32 (20) + null IID (20) = 40
+//   0x38  ILT entry for ExitProcess (8) + null (8) = 16
+//   0x48  Hint(2) + "ExitProcess\0" + pad = 16
+//   0x58  "kernel32.dll\0" + pad = 16
+//   0x68  end (104 bytes virtual)
+let is i64 as IDATA_IAT_OFF with imut = 0;
+let is i64 as IDATA_IID_OFF with imut = 16;     // 0x10
+let is i64 as IDATA_ILT_OFF with imut = 56;     // 0x38
+let is i64 as IDATA_HINT_OFF with imut = 72;    // 0x48
+let is i64 as IDATA_DLLNAME_OFF with imut = 88; // 0x58
+let is i64 as IDATA_VIRT_SIZE with imut = 104;  // 0x68
+
+// === Helpers ===
+
+fn pad_to(b as *reader.ByteBuffer, target as i64) as void {
+    while (b.len < target) { reader.buf_emit8(b, 0); }
+}
+
+fn emit_str(b as *reader.ByteBuffer, s as *u8, n as i64) as void {
+    let is i64 as i with mut = 0;
+    while (i < n) { reader.buf_emit8(b, cast(i32, s[i])); i = i + 1; }
+}
+
+// === Public entry: write hardcoded ExitProcess(42) PE ===
+
+fn write_minimal_exit42(fd as i64) as i32 {
+    let is reader.ByteBuffer as out = reader.buf_init(4096);
+
+    // --- DOS header (64 bytes) ---
+    reader.buf_emit8(&out, 77);   // 'M'
+    reader.buf_emit8(&out, 90);   // 'Z'
+    // pad to 0x3C
+    pad_to(&out, 60);
+    reader.buf_emit32_le(&out, 128);  // e_lfanew = 0x80
+    pad_to(&out, 64);
+
+    // --- DOS stub (64 bytes): minimal "This program cannot be run in DOS mode" ---
+    // Use a simple stub: int 0x21, "This program cannot be run in DOS mode.\r\n$"
+    // For Fase 1 simplicity, just zero-fill the stub area.
+    pad_to(&out, 128);
+
+    // --- PE signature ---
+    reader.buf_emit8(&out, 80);   // 'P'
+    reader.buf_emit8(&out, 69);   // 'E'
+    reader.buf_emit8(&out, 0);
+    reader.buf_emit8(&out, 0);
+
+    // --- COFF file header (20 bytes) ---
+    reader.buf_emit16_le(&out, IMAGE_FILE_MACHINE_AMD64);  // Machine
+    reader.buf_emit16_le(&out, 2);                          // NumberOfSections = .text + .idata
+    reader.buf_emit32_le(&out, 0);                          // TimeDateStamp
+    reader.buf_emit32_le(&out, 0);                          // PointerToSymbolTable (stripped)
+    reader.buf_emit32_le(&out, 0);                          // NumberOfSymbols
+    reader.buf_emit16_le(&out, 240);                        // SizeOfOptionalHeader (PE32+)
+    reader.buf_emit16_le(&out, IMAGE_FILE_EXECUTABLE_IMAGE + IMAGE_FILE_LARGE_ADDRESS_AWARE);
+
+    // --- Optional header PE32+ (240 bytes) ---
+    reader.buf_emit16_le(&out, PE_OPT_MAGIC_PE32PLUS);     // Magic = 0x20B
+    reader.buf_emit8(&out, 1);                              // MajorLinkerVersion
+    reader.buf_emit8(&out, 0);                              // MinorLinkerVersion
+    reader.buf_emit32_le(&out, TEXT_RAW_SIZE);              // SizeOfCode
+    reader.buf_emit32_le(&out, IDATA_RAW_SIZE);             // SizeOfInitializedData
+    reader.buf_emit32_le(&out, 0);                          // SizeOfUninitializedData
+    reader.buf_emit32_le(&out, TEXT_RVA);                   // AddressOfEntryPoint
+    reader.buf_emit32_le(&out, TEXT_RVA);                   // BaseOfCode
+    reader.buf_emit64_le(&out, IMAGE_BASE);                 // ImageBase
+    reader.buf_emit32_le(&out, SECTION_ALIGN);              // SectionAlignment
+    reader.buf_emit32_le(&out, FILE_ALIGN);                 // FileAlignment
+    reader.buf_emit16_le(&out, 6);                          // MajorOSVersion
+    reader.buf_emit16_le(&out, 0);                          // MinorOSVersion
+    reader.buf_emit16_le(&out, 0);                          // MajorImageVersion
+    reader.buf_emit16_le(&out, 0);                          // MinorImageVersion
+    reader.buf_emit16_le(&out, 6);                          // MajorSubsystemVersion
+    reader.buf_emit16_le(&out, 0);                          // MinorSubsystemVersion
+    reader.buf_emit32_le(&out, 0);                          // Win32VersionValue (reserved)
+    reader.buf_emit32_le(&out, SIZE_OF_IMAGE);              // SizeOfImage
+    reader.buf_emit32_le(&out, SIZE_OF_HEADERS);            // SizeOfHeaders
+    reader.buf_emit32_le(&out, 0);                          // CheckSum (loader doesn't enforce for EXEs)
+    reader.buf_emit16_le(&out, IMAGE_SUBSYSTEM_WINDOWS_CUI); // Subsystem
+    reader.buf_emit16_le(&out, 0);                          // DllCharacteristics (no ASLR in Fase 1)
+    reader.buf_emit64_le(&out, 1048576);                    // SizeOfStackReserve = 0x100000
+    reader.buf_emit64_le(&out, 4096);                       // SizeOfStackCommit  = 0x1000
+    reader.buf_emit64_le(&out, 1048576);                    // SizeOfHeapReserve  = 0x100000
+    reader.buf_emit64_le(&out, 4096);                       // SizeOfHeapCommit   = 0x1000
+    reader.buf_emit32_le(&out, 0);                          // LoaderFlags
+    reader.buf_emit32_le(&out, 16);                         // NumberOfRvaAndSizes
+
+    // Data directories (16 × 8 = 128 bytes). Only Import (1) and IAT (12) are non-zero.
+    reader.buf_emit32_le(&out, 0); reader.buf_emit32_le(&out, 0); // [0] Export
+    reader.buf_emit32_le(&out, IDATA_RVA + IDATA_IID_OFF); reader.buf_emit32_le(&out, 40); // [1] Import (2 IID entries)
+    reader.buf_emit32_le(&out, 0); reader.buf_emit32_le(&out, 0); // [2] Resource
+    reader.buf_emit32_le(&out, 0); reader.buf_emit32_le(&out, 0); // [3] Exception
+    reader.buf_emit32_le(&out, 0); reader.buf_emit32_le(&out, 0); // [4] Certificate
+    reader.buf_emit32_le(&out, 0); reader.buf_emit32_le(&out, 0); // [5] Base Relocation
+    reader.buf_emit32_le(&out, 0); reader.buf_emit32_le(&out, 0); // [6] Debug
+    reader.buf_emit32_le(&out, 0); reader.buf_emit32_le(&out, 0); // [7] Architecture
+    reader.buf_emit32_le(&out, 0); reader.buf_emit32_le(&out, 0); // [8] Global Ptr
+    reader.buf_emit32_le(&out, 0); reader.buf_emit32_le(&out, 0); // [9] TLS
+    reader.buf_emit32_le(&out, 0); reader.buf_emit32_le(&out, 0); // [10] Load Config
+    reader.buf_emit32_le(&out, 0); reader.buf_emit32_le(&out, 0); // [11] Bound Import
+    reader.buf_emit32_le(&out, IDATA_RVA + IDATA_IAT_OFF); reader.buf_emit32_le(&out, 16); // [12] IAT
+    reader.buf_emit32_le(&out, 0); reader.buf_emit32_le(&out, 0); // [13] Delay Import
+    reader.buf_emit32_le(&out, 0); reader.buf_emit32_le(&out, 0); // [14] CLR
+    reader.buf_emit32_le(&out, 0); reader.buf_emit32_le(&out, 0); // [15] Reserved
+
+    // --- Section table (2 entries × 40 bytes = 80 bytes) ---
+    // .text
+    emit_str(&out, ".text", 5); pad_to(&out, out.len + 3);  // name pad to 8 bytes
+    reader.buf_emit32_le(&out, TEXT_VIRT_SIZE);             // VirtualSize
+    reader.buf_emit32_le(&out, TEXT_RVA);                   // VirtualAddress
+    reader.buf_emit32_le(&out, TEXT_RAW_SIZE);              // SizeOfRawData
+    reader.buf_emit32_le(&out, TEXT_FILE);                  // PointerToRawData
+    reader.buf_emit32_le(&out, 0);                          // PointerToRelocations
+    reader.buf_emit32_le(&out, 0);                          // PointerToLinenumbers
+    reader.buf_emit16_le(&out, 0);                          // NumberOfRelocations
+    reader.buf_emit16_le(&out, 0);                          // NumberOfLinenumbers
+    reader.buf_emit32_le(&out, IMAGE_SCN_CNT_CODE + IMAGE_SCN_MEM_EXECUTE + IMAGE_SCN_MEM_READ);
+
+    // .idata
+    emit_str(&out, ".idata", 6); pad_to(&out, out.len + 2);  // name pad to 8 bytes
+    reader.buf_emit32_le(&out, IDATA_VIRT_SIZE);
+    reader.buf_emit32_le(&out, IDATA_RVA);
+    reader.buf_emit32_le(&out, IDATA_RAW_SIZE);
+    reader.buf_emit32_le(&out, IDATA_FILE);
+    reader.buf_emit32_le(&out, 0);
+    reader.buf_emit32_le(&out, 0);
+    reader.buf_emit16_le(&out, 0);
+    reader.buf_emit16_le(&out, 0);
+    reader.buf_emit32_le(&out, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE);
+
+    // Pad headers to FileAlignment (0x200)
+    pad_to(&out, HEADERS_FILE_SIZE);
+
+    // --- .text raw data (at file 0x200, RVA 0x1000) ---
+    // sub rsp, 0x28     ; 48 83 EC 28        (shadow space + alignment)
+    reader.buf_emit8(&out, 72);   // 0x48
+    reader.buf_emit8(&out, 131);  // 0x83
+    reader.buf_emit8(&out, 236);  // 0xEC
+    reader.buf_emit8(&out, 40);   // 0x28
+    // mov ecx, 42       ; B9 2A 00 00 00
+    reader.buf_emit8(&out, 185);  // 0xB9
+    reader.buf_emit32_le(&out, 42);
+    // call qword ptr [rip+disp32]  ; FF 15 disp32
+    // RVA of this call = TEXT_RVA + 4 + 5 = 0x1009
+    // Next instruction RVA = 0x1009 + 6 = 0x100F
+    // Target = IDATA_RVA + IDATA_IAT_OFF = 0x2000
+    // disp32 = 0x2000 - 0x100F = 0xFF1
+    reader.buf_emit8(&out, 255);  // 0xFF
+    reader.buf_emit8(&out, 21);   // 0x15
+    let is i64 as call_next_rva = TEXT_RVA + 4 + 5 + 6;     // 0x100F
+    let is i64 as iat_slot_rva = IDATA_RVA + IDATA_IAT_OFF;  // 0x2000
+    reader.buf_emit32_le(&out, iat_slot_rva - call_next_rva);
+
+    // Pad .text raw to TEXT_RAW_SIZE (next section at file 0x400)
+    pad_to(&out, TEXT_FILE + TEXT_RAW_SIZE);
+
+    // --- .idata raw (at file 0x400, RVA 0x2000) ---
+    // [IAT slot for ExitProcess] = RVA to hint/name (loader patches at load time)
+    let is i64 as hint_rva = IDATA_RVA + IDATA_HINT_OFF;
+    reader.buf_emit64_le(&out, hint_rva);    // 8 bytes — IAT entry
+    reader.buf_emit64_le(&out, 0);            // 8 bytes — IAT null terminator
+
+    // [IID for kernel32] (20 bytes)
+    reader.buf_emit32_le(&out, IDATA_RVA + IDATA_ILT_OFF);  // OriginalFirstThunk (ILT RVA)
+    reader.buf_emit32_le(&out, 0);                          // TimeDateStamp
+    reader.buf_emit32_le(&out, 0);                          // ForwarderChain
+    reader.buf_emit32_le(&out, IDATA_RVA + IDATA_DLLNAME_OFF); // Name (DLL name RVA)
+    reader.buf_emit32_le(&out, IDATA_RVA + IDATA_IAT_OFF);  // FirstThunk (IAT RVA)
+    // [Null IID] (20 zero bytes)
+    reader.buf_emit32_le(&out, 0); reader.buf_emit32_le(&out, 0);
+    reader.buf_emit32_le(&out, 0); reader.buf_emit32_le(&out, 0);
+    reader.buf_emit32_le(&out, 0);
+
+    // [ILT entry for ExitProcess] (8 bytes) = RVA to hint/name (bit 63 = 0 → by-name import)
+    reader.buf_emit64_le(&out, hint_rva);
+    // [ILT null] (8 bytes)
+    reader.buf_emit64_le(&out, 0);
+
+    // [Hint(2) + "ExitProcess\0" + pad to 16 bytes]
+    reader.buf_emit16_le(&out, 0);  // hint
+    emit_str(&out, "ExitProcess", 11);
+    reader.buf_emit8(&out, 0);      // NUL
+    reader.buf_emit8(&out, 0);      // pad
+    // Total: 2 + 11 + 1 + 1 = 15. Should be 16 to land at IDATA_DLLNAME_OFF.
+    reader.buf_emit8(&out, 0);      // pad to 16
+
+    // ["kernel32.dll\0" + pad to 16 bytes]
+    emit_str(&out, "kernel32.dll", 12);
+    reader.buf_emit8(&out, 0);      // NUL
+    pad_to(&out, IDATA_FILE + IDATA_DLLNAME_OFF + 16);  // pad name area to 16
+
+    // Pad .idata raw to IDATA_RAW_SIZE
+    pad_to(&out, IDATA_FILE + IDATA_RAW_SIZE);
+
+    // --- Write to file ---
+    linux.write(fd, out.data, out.len);
+    return 0;
+}
+
+// Full pipeline entry — stays a stub for Fase 2.
 fn write_pe_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
-    linux.write(linux.STDERR, "caustic-ld: PE writer not yet implemented (Fase 1+)\n", 52);
+    linux.write(linux.STDERR, "caustic-ld: PE writer not yet implemented (Fase 2)\n", 52);
     linux.exit(1);
     return 1;
 }
