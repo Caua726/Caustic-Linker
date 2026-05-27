@@ -4,6 +4,7 @@ use "../src/ir/opt_mem.cst" as om;
 use "elf_reader.cst" as reader;
 use "linker.cst" as linker;
 use "elf_writer.cst" as writer;
+use "../src/codegen/target.cst" as tgt;
 
 // ============================================================
 // main.cst — CLI parsing and orchestration for caustic-ld
@@ -271,6 +272,7 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
 // ============================================================
 
 fn main(argc as i64, argv as i64) as i32 {
+    tgt.target_init();
     let is *i64 as argv_arr = cast(*i64, argv);
 
     if (argc < 2) {
@@ -312,6 +314,20 @@ fn main(argc as i64, argv as i64) as i32 {
         else if (starts_with(arg, "--base=") == 1) {
             let is *u8 as hex_str = cast(*u8, cast(i64, arg) + 7);
             base_addr = parse_hex(hex_str);
+        }
+        else if (starts_with(arg, "--target=") == 1) {
+            let is *u8 as triple = cast(*u8, cast(i64, arg) + 9);
+            let is i32 as tlen with mut = 0;
+            while (triple[tlen] != cast(u8, 0)) { tlen = tlen + 1; }
+            let is i32 as ok = tgt.load_target(triple, tlen);
+            if (ok == 0) {
+                print_str("caustic-ld: unknown --target\n");
+                return 1;
+            }
+            if (tgt.str_eq_local(triple, tlen, "windows-x86_64", 14) == 1) {
+                print_str("caustic-ld: windows-x86_64 not yet implemented\n");
+                return 1;
+            }
         }
         else if (streq_lit(arg, "--strip") == 1) {
             do_strip = 1;
