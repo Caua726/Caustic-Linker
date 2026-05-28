@@ -1,5 +1,5 @@
 use "../std/mem.cst" as mem;
-use "../std/linux.cst" as linux;
+use "../std/io.cst" as io;
 use "elf_reader.cst" as reader;
 use "linker.cst" as linker;
 
@@ -96,15 +96,16 @@ fn write_null_shdr(out as *reader.ByteBuffer) as void {
 
 // Write buffer to file. Returns 0 on success, 1 on error.
 fn write_buf_to_file(out as *reader.ByteBuffer, output_path as *u8) as i32 {
-    let is i64 as fd = linux.open(output_path, 577, 493);
+    let is i64 as fd = io._open_write(output_path);
     if (fd < 0) {
         reader.print_str("error: cannot create output: ");
         reader.print_str(output_path);
         reader.print_str("\n");
         return 1;
     }
-    linux.write(fd, out.data, out.len);
-    linux.close(fd);
+    io._write_fd(fd, out.data, out.len);
+    io._close_fd(fd);
+    io.make_executable(output_path);
     return 0;
 }
 
@@ -283,7 +284,6 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
         csi = csi + 1;
     }
 
-    let is i64 as rw_data_pad = data_file_off - rodata_file_off - ls.rodata_size;
     let is i64 as rw_file_sz = csec_end_off - rodata_file_off;
     let is i64 as rw_mem_size = rw_file_sz + ls.bss_total;
     if (rw_mem_size > 0) {

@@ -1,0 +1,569 @@
+use "../std/io.cst" as io;
+use "../src/ir/opt_mem.cst" as om;
+use "elf_reader.cst" as reader;
+
+// ============================================================
+// pdb_writer.cst — Multi-Stream File (.pdb) writer
+//
+// Emits a minimal but valid PDB MSF7 file (block size 4 KiB) so the
+// EXE's IMAGE_DEBUG_DIRECTORY entry has a real sidecar to point at.
+//
+// Layout (one stream per 4 KiB block — wastes space, simplifies bookkeeping):
+//
+//   Block 0:  Superblock (32B magic + 24B header)
+//   Block 1:  Free Page Map slot A (bitmap)
+//   Block 2:  Free Page Map slot B (bitmap)
+//   Block 3:  Block map (u32[] of stream-directory block numbers)
+//   Block 4:  Stream Directory (NumStreams + Sizes + per-stream block lists)
+//   Block 5:  Stream 1 — PDB Info
+//   Block 6:  Stream 2 — TPI  (empty header)
+//   Block 7:  Stream 3 — DBI  (empty header + OptionalDbgHeader)
+//   Block 8:  Stream 4 — IPI  (empty header)
+//   Block 9:  Stream 5 — Section Headers (raw IMAGE_SECTION_HEADER array)
+//   Block 10: Stream 6 — Symbol Records (S_PUB32 sequence)
+//   Block 11: Stream 7 — Publics (PSGSI header + GSI hash + addr map)
+//   Block 12: Stream 8 — Module Symbol Stream (CV_SIGNATURE + sym records + C13 line info)
+//
+// Total: 13 blocks * 4096 = 52 KiB. The GUID and Age fields of the
+// PDB Info stream MUST match what the EXE's RSDS record carries —
+// the debugger uses (GUID, Age) to associate sidecar with image.
+// Section Headers stream is referenced by DBI's OptionalDbgHeader[5];
+// without it WinDbg cannot translate section+offset back to RVA.
+// Publics + Symbol Records resolve function names from addresses.
+// Module Stream + DBI ModuleInfo carry line tables for source-level debugging.
+// ============================================================
+
+let is i64 as BLOCK_SIZE with imut = 4096;
+let is i64 as NUM_BLOCKS with imut = 13;
+
+// Stream indices
+let is i32 as STREAM_OLD_DIR with imut = 0;
+let is i32 as STREAM_PDB_INFO with imut = 1;
+let is i32 as STREAM_TPI with imut = 2;
+let is i32 as STREAM_DBI with imut = 3;
+let is i32 as STREAM_IPI with imut = 4;
+let is i32 as STREAM_SECTION_HEADERS with imut = 5;
+let is i32 as STREAM_SYMREC with imut = 6;
+let is i32 as STREAM_PUBLICS with imut = 7;
+let is i32 as STREAM_MODULE with imut = 8;
+let is i32 as NUM_STREAMS with imut = 9;
+
+// Block assignments (1 block each, even when content is small).
+let is i64 as BLOCK_SUPER with imut = 0;
+let is i64 as BLOCK_FPM_A with imut = 1;
+let is i64 as BLOCK_FPM_B with imut = 2;
+let is i64 as BLOCK_BLOCKMAP with imut = 3;
+let is i64 as BLOCK_STREAMDIR with imut = 4;
+let is i64 as BLOCK_PDB_INFO with imut = 5;
+let is i64 as BLOCK_TPI with imut = 6;
+let is i64 as BLOCK_DBI with imut = 7;
+let is i64 as BLOCK_IPI with imut = 8;
+let is i64 as BLOCK_SECTION_HEADERS with imut = 9;
+let is i64 as BLOCK_SYMREC with imut = 10;
+let is i64 as BLOCK_PUBLICS with imut = 11;
+let is i64 as BLOCK_MODULE with imut = 12;
+
+// Stream version codes
+let is i64 as PDBImpvVC70 with imut = 20000404;
+let is i64 as TpiImpvV80 with imut = 20040203;
+let is i64 as DbiImpvV70 with imut = 19990903;
+
+// === Helpers ===
+
+fn _u32_le(buf as *u8, off as i64, val as i64) as void {
+    buf[off]     = cast(u8, val & 255);
+    buf[off + 1] = cast(u8, (val >> 8) & 255);
+    buf[off + 2] = cast(u8, (val >> 16) & 255);
+    buf[off + 3] = cast(u8, (val >> 24) & 255);
+}
+
+fn _u16_le(buf as *u8, off as i64, val as i64) as void {
+    buf[off]     = cast(u8, val & 255);
+    buf[off + 1] = cast(u8, (val >> 8) & 255);
+}
+
+fn _zero_block(buf as *u8, block as i64) as void {
+    let is i64 as base = block * BLOCK_SIZE;
+    let is i64 as i with mut = 0;
+    while (i < BLOCK_SIZE) {
+        buf[base + i] = cast(u8, 0);
+        i = i + 1;
+    }
+}
+
+// === Superblock ===
+
+fn _emit_superblock(buf as *u8, num_dir_bytes as i64) as void {
+    // 32-byte magic
+    let is *u8 as magic = "Microsoft C/C++ MSF 7.00\r\n";
+    let is i64 as i with mut = 0;
+    while (i < 26) {
+        buf[i] = magic[i];
+        i = i + 1;
+    }
+    buf[26] = cast(u8, 26);   // SUB
+    buf[27] = cast(u8, 68);   // 'D'
+    buf[28] = cast(u8, 83);   // 'S'
+    buf[29] = cast(u8, 0);
+    buf[30] = cast(u8, 0);
+    buf[31] = cast(u8, 0);
+
+    // Header (24 bytes)
+    _u32_le(buf, 32, BLOCK_SIZE);              // BlockSize = 4096
+    _u32_le(buf, 36, 1);                        // FreeBlockMapBlock = 1 (slot A)
+    _u32_le(buf, 40, NUM_BLOCKS);               // NumBlocks
+    _u32_le(buf, 44, num_dir_bytes);            // NumDirectoryBytes
+    _u32_le(buf, 48, 0);                        // Unknown
+    _u32_le(buf, 52, BLOCK_BLOCKMAP);           // BlockMapAddr
+}
+
+// === Free Page Map ===
+//
+// Bit i = 1 means block i is FREE, 0 means USED. With 9 blocks used (0..8),
+// bits 0..8 are 0 and bits 9..(4096*8 - 1) are 1.
+fn _emit_fpm(buf as *u8, block as i64) as void {
+    let is i64 as base = block * BLOCK_SIZE;
+    // Free bit = 1, used = 0. Blocks 0..(NUM_BLOCKS-1) are used; the rest of
+    // the bitmap (capacity = BLOCK_SIZE*8 bits) is free. If NUM_BLOCKS
+    // changes, this loop must be revisited.
+    let is i64 as nb = NUM_BLOCKS;
+    let is i64 as i with mut = 0;
+    while (i < BLOCK_SIZE) {
+        let is i64 as first_bit = i * 8;
+        if (first_bit + 8 <= nb) {
+            buf[base + i] = cast(u8, 0);
+        } else if (first_bit >= nb) {
+            buf[base + i] = cast(u8, 255);
+        } else {
+            let is i64 as used_in_byte = nb - first_bit;
+            let is i64 as mask = 255 << used_in_byte;
+            buf[base + i] = cast(u8, mask & 255);
+        }
+        i = i + 1;
+    }
+}
+
+// === Stream Directory ===
+//
+// Format:
+//   u32 NumStreams
+//   u32[NumStreams] StreamSizes (in bytes)
+//   For each stream i: u32[ceil(size/BlockSize)] BlockNumbers
+//
+// Layout for our 5 streams:
+//   Stream 0: size 0  (no blocks)
+//   Stream 1: size pdb_info_size, 1 block (BLOCK_PDB_INFO)
+//   Stream 2: size tpi_size,      1 block (BLOCK_TPI)
+//   Stream 3: size dbi_size,      1 block (BLOCK_DBI)
+//   Stream 4: size ipi_size,      1 block (BLOCK_IPI)
+fn _emit_stream_dir(buf as *u8,
+                    pdb_info_size as i32, tpi_size as i32,
+                    dbi_size as i32, ipi_size as i32,
+                    section_headers_size as i32,
+                    symrec_size as i32, publics_size as i32,
+                    module_size as i32) as i64 {
+    let is i64 as base = BLOCK_STREAMDIR * BLOCK_SIZE;
+    let is i64 as off with mut = 0;
+
+    _u32_le(buf, base + off, NUM_STREAMS); off = off + 4;
+    _u32_le(buf, base + off, 0);                                off = off + 4;
+    _u32_le(buf, base + off, cast(i64, pdb_info_size));         off = off + 4;
+    _u32_le(buf, base + off, cast(i64, tpi_size));              off = off + 4;
+    _u32_le(buf, base + off, cast(i64, dbi_size));              off = off + 4;
+    _u32_le(buf, base + off, cast(i64, ipi_size));              off = off + 4;
+    _u32_le(buf, base + off, cast(i64, section_headers_size));  off = off + 4;
+    _u32_le(buf, base + off, cast(i64, symrec_size));           off = off + 4;
+    _u32_le(buf, base + off, cast(i64, publics_size));          off = off + 4;
+    _u32_le(buf, base + off, cast(i64, module_size));           off = off + 4;
+
+    // Stream 0 has no blocks. Streams 1..8 each have 1 block.
+    _u32_le(buf, base + off, BLOCK_PDB_INFO);        off = off + 4;
+    _u32_le(buf, base + off, BLOCK_TPI);             off = off + 4;
+    _u32_le(buf, base + off, BLOCK_DBI);             off = off + 4;
+    _u32_le(buf, base + off, BLOCK_IPI);             off = off + 4;
+    _u32_le(buf, base + off, BLOCK_SECTION_HEADERS); off = off + 4;
+    _u32_le(buf, base + off, BLOCK_SYMREC);          off = off + 4;
+    _u32_le(buf, base + off, BLOCK_PUBLICS);         off = off + 4;
+    _u32_le(buf, base + off, BLOCK_MODULE);          off = off + 4;
+
+    return off;  // = num_dir_bytes
+}
+
+// === Block Map ===
+//
+// Holds u32[] of block numbers that store the stream directory. We use
+// just 1 block (BLOCK_STREAMDIR) for the directory.
+fn _emit_block_map(buf as *u8) as void {
+    let is i64 as base = BLOCK_BLOCKMAP * BLOCK_SIZE;
+    _u32_le(buf, base, BLOCK_STREAMDIR);
+}
+
+// === Stream 1: PDB Info ===
+//
+// Layout:
+//   u32 Version       = PDBImpvVC70 (20000404)
+//   u32 Signature     = creation timestamp (we use 0)
+//   u32 Age           = 1 (must match RSDS record)
+//   u8[16] Guid       = must match RSDS record
+//   u32 NamedStreamMap.StringBufferSize = 0  (no named streams)
+//   HashTable (empty):
+//     u32 Size              = 0
+//     u32 Capacity          = 0
+//     u32 PresentBitVecWords = 0  (SparseBitVector: 0 words)
+//     u32 DeletedBitVecWords = 0
+//   u32 FeatureCode = 20140508  (VC110)
+fn _emit_pdb_info(buf as *u8, guid as *u8) as i32 {
+    let is i64 as base = BLOCK_PDB_INFO * BLOCK_SIZE;
+    let is i64 as off with mut = 0;
+
+    _u32_le(buf, base + off, PDBImpvVC70); off = off + 4;
+    _u32_le(buf, base + off, 0);            off = off + 4;  // Signature
+    _u32_le(buf, base + off, 1);            off = off + 4;  // Age
+    // GUID (16 bytes verbatim from RSDS record)
+    let is i32 as g with mut = 0;
+    while (g < 16) {
+        buf[base + off + cast(i64, g)] = guid[g];
+        g = g + 1;
+    }
+    off = off + 16;
+
+    // NamedStreamMap: empty. llvm-pdbutil rejects Capacity == 0, so we use
+    // 1 (matches what LLVM's PDB writer emits for an empty named-stream map).
+    _u32_le(buf, base + off, 0); off = off + 4;  // StringBufferSize
+    _u32_le(buf, base + off, 0); off = off + 4;  // HashTable.Size
+    _u32_le(buf, base + off, 1); off = off + 4;  // HashTable.Capacity (must be > 0)
+    _u32_le(buf, base + off, 0); off = off + 4;  // PresentBitVec.NumWords
+    _u32_le(buf, base + off, 0); off = off + 4;  // DeletedBitVec.NumWords
+
+    // Feature code (VC110 = newest format markers acceptable to llvm-pdbutil)
+    _u32_le(buf, base + off, 20140508); off = off + 4;
+
+    return cast(i32, off);
+}
+
+// === Stream 2: TPI — per-function type info ===
+//
+// pe_writer's build_tpi_body assembles one LF_ARGLIST + LF_PROCEDURE pair
+// per defined TEXT-section gsym in VA-sorted order. The i-th function
+// (0-based) occupies type indices TYPE_INDEX_BEGIN + 2*i (arglist) and
+// TYPE_INDEX_BEGIN + 2*i + 1 (procedure). IPI's LF_FUNC_ID(i) references
+// the procedure; S_GPROC32_ID(i) references the LF_FUNC_ID by ordinal.
+
+let is i32 as TYPE_INDEX_BEGIN with imut = 4096; // 0x1000
+
+fn _emit_tpi(buf as *u8, tpi_body as *u8, tpi_body_size as i32,
+             num_types as i32) as i32 {
+    let is i64 as base = BLOCK_TPI * BLOCK_SIZE;
+    _u32_le(buf, base + 0,  TpiImpvV80);
+    _u32_le(buf, base + 4,  56);                       // HeaderSize
+    _u32_le(buf, base + 8,  cast(i64, TYPE_INDEX_BEGIN));
+    _u32_le(buf, base + 12, cast(i64, TYPE_INDEX_BEGIN + num_types));
+    _u32_le(buf, base + 16, cast(i64, tpi_body_size));
+    _u16_le(buf, base + 20, 65535);
+    _u16_le(buf, base + 22, 65535);
+    _u32_le(buf, base + 24, 4);
+    _u32_le(buf, base + 28, 262144);
+    _u32_le(buf, base + 32, 0);
+    _u32_le(buf, base + 36, 0);
+    _u32_le(buf, base + 40, 0);
+    _u32_le(buf, base + 44, 0);
+    _u32_le(buf, base + 48, 4294967295);
+    _u32_le(buf, base + 52, 0);
+    let is i64 as i with mut = 0;
+    while (i < cast(i64, tpi_body_size)) {
+        buf[base + 56 + i] = tpi_body[i];
+        i = i + 1;
+    }
+    return 56 + tpi_body_size;
+}
+
+// === Stream 3: DBI ===
+//
+// 64-byte header followed by:
+//   ModuleInfo substream     (size = ModInfoSize)
+//   SectionContrib substream (size = SectionContributionSize)
+//   (5 more substreams left empty)
+//   OptionalDbgHeader (11 u16 stream indices)
+//
+// Without the ModuleInfo + SectionContrib substreams, the debugger has
+// no way to associate an RVA with a module's symbol stream — line tables
+// are unreachable.
+
+let is i64 as SEC_CONTRIB_VER_V60 with imut = 4046371373;   // 0xeffe0000 + 19970605
+let is i64 as IMAGE_SCN_TEXT_CHARS with imut = 1610612768;  // 0x60000020
+
+// Write a 28-byte SectionContrib record. Fields kept consistent with what
+// PE writer set for .text: section index 1, offset 0, size = text_size,
+// characteristics = CODE|EXECUTE|READ (0x60000020).
+fn _emit_section_contrib(buf as *u8, base as i64, off_in as i64,
+                         text_size as i32) as i64 {
+    let is i64 as off with mut = off_in;
+    _u16_le(buf, base + off, 1);                              off = off + 2;  // isectContrib
+    _u16_le(buf, base + off, 0);                              off = off + 2;  // padding
+    _u32_le(buf, base + off, 0);                              off = off + 4;  // offset
+    _u32_le(buf, base + off, cast(i64, text_size));           off = off + 4;  // size
+    _u32_le(buf, base + off, IMAGE_SCN_TEXT_CHARS);           off = off + 4;  // characteristics
+    _u16_le(buf, base + off, 0);                              off = off + 2;  // moduleIndex
+    _u16_le(buf, base + off, 0);                              off = off + 2;  // padding2
+    _u32_le(buf, base + off, 0);                              off = off + 4;  // dataCrc
+    _u32_le(buf, base + off, 0);                              off = off + 4;  // relocCrc
+    return off;
+}
+
+fn _emit_dbi(buf as *u8, mod_name as *u8, mod_name_len as i32,
+             sym_byte_size as i32, c13_byte_size as i32,
+             text_size as i32) as i32 {
+    let is i64 as base = BLOCK_DBI * BLOCK_SIZE;
+
+    // We need to reserve the 64-byte header first, fill substreams, then
+    // come back and patch the header sizes. Track offsets.
+    let is i64 as off with mut = 64;            // skip header for now
+
+    // === ModuleInfo substream ===
+    // One module entry: header + SectionContrib + flags + sym stream ref +
+    // 3 size fields + (counts) + 2 path index slots + 2 null-term strings.
+    let is i64 as mod_start = off;
+    _u32_le(buf, base + off, 0);                              off = off + 4;  // unused1
+    off = _emit_section_contrib(buf, base, off, text_size);                   // 28 bytes
+    _u16_le(buf, base + off, 0);                              off = off + 2;  // flags
+    _u16_le(buf, base + off, cast(i64, STREAM_MODULE));       off = off + 2;  // ModuleSymStream
+    _u32_le(buf, base + off, cast(i64, sym_byte_size));       off = off + 4;  // SymByteSize
+    _u32_le(buf, base + off, 0);                              off = off + 4;  // C11ByteSize
+    _u32_le(buf, base + off, cast(i64, c13_byte_size));       off = off + 4;  // C13ByteSize
+    _u16_le(buf, base + off, 0);                              off = off + 2;  // SourceFileCount
+    _u16_le(buf, base + off, 0);                              off = off + 2;  // padding
+    _u32_le(buf, base + off, 0);                              off = off + 4;  // unused2
+    _u32_le(buf, base + off, 0);                              off = off + 4;  // SourceFileNameIdx
+    _u32_le(buf, base + off, 0);                              off = off + 4;  // PdbFilePathNameIdx
+    // ModuleName + ObjFileName, both null-term, then pad substream to 4.
+    let is i32 as ni with mut = 0;
+    while (ni < mod_name_len) {
+        buf[base + off] = mod_name[ni];
+        off = off + 1;
+        ni = ni + 1;
+    }
+    buf[base + off] = cast(u8, 0); off = off + 1;
+    ni = 0;
+    while (ni < mod_name_len) {
+        buf[base + off] = mod_name[ni];
+        off = off + 1;
+        ni = ni + 1;
+    }
+    buf[base + off] = cast(u8, 0); off = off + 1;
+    while ((off & 3) != 0) { buf[base + off] = cast(u8, 0); off = off + 1; }
+    let is i64 as mod_info_size = off - mod_start;
+
+    // === SectionContrib substream ===
+    //   u32 version
+    //   SectionContrib[] sorted by section, offset
+    let is i64 as sc_start = off;
+    _u32_le(buf, base + off, SEC_CONTRIB_VER_V60);            off = off + 4;
+    off = _emit_section_contrib(buf, base, off, text_size);                   // 28 bytes
+    let is i64 as sc_size = off - sc_start;
+
+    // === SourceInfo substream ===
+    //   u16 NumModules
+    //   u16 NumSourceFiles
+    //   u16[NumModules] ModIndices
+    //   u16[NumModules] ModFileCounts
+    //   u32[total_files] FileNameOffsets
+    //   strings (concat null-term)
+    //   pad to 4
+    //
+    // Required even when modules carry no per-file mapping: LLVM iterates
+    // its modules vector and asserts that SourceInfo has matching counts.
+    // With 1 module / 0 files we still need the per-module 0-count slot.
+    let is i64 as si_start = off;
+    _u16_le(buf, base + off, 1);                              off = off + 2;  // NumModules
+    _u16_le(buf, base + off, 0);                              off = off + 2;  // NumSourceFiles
+    _u16_le(buf, base + off, 0);                              off = off + 2;  // ModIndices[0] = 0
+    _u16_le(buf, base + off, 0);                              off = off + 2;  // ModFileCounts[0] = 0
+    while ((off & 3) != 0) { buf[base + off] = cast(u8, 0); off = off + 1; }
+    let is i64 as si_size = off - si_start;
+
+    // 4 more substreams all empty.
+
+    // OptionalDbgHeader — 11 u16 entries.
+    let is i64 as opt_start = off;
+    let is i32 as oi with mut = 0;
+    while (oi < 11) {
+        let is i64 as val with mut = 65535;
+        if (oi == 5) { val = cast(i64, STREAM_SECTION_HEADERS); }
+        _u16_le(buf, base + off, val);
+        off = off + 2;
+        oi = oi + 1;
+    }
+    let is i64 as opt_size = off - opt_start;
+
+    // === Now write the header at offset 0 ===
+    let is i64 as h with mut = 0;
+    _u32_le(buf, base + h, 4294967295);            h = h + 4;  // VersionSignature = -1
+    _u32_le(buf, base + h, DbiImpvV70);            h = h + 4;
+    _u32_le(buf, base + h, 1);                     h = h + 4;  // Age
+    _u16_le(buf, base + h, 65535);                 h = h + 2;  // GlobalStreamIndex
+    _u16_le(buf, base + h, 0);                     h = h + 2;
+    _u16_le(buf, base + h, cast(i64, STREAM_PUBLICS)); h = h + 2;
+    _u16_le(buf, base + h, 0);                     h = h + 2;
+    _u16_le(buf, base + h, cast(i64, STREAM_SYMREC));  h = h + 2;
+    _u16_le(buf, base + h, 0);                     h = h + 2;
+    _u32_le(buf, base + h, mod_info_size);         h = h + 4;
+    _u32_le(buf, base + h, sc_size);               h = h + 4;
+    _u32_le(buf, base + h, 0);                     h = h + 4;  // SectionMapSize
+    _u32_le(buf, base + h, si_size);               h = h + 4;  // SourceInfoSize
+    _u32_le(buf, base + h, 0);                     h = h + 4;  // TypeServerMapSize
+    _u32_le(buf, base + h, 0);                     h = h + 4;  // MFCTypeServerIndex
+    _u32_le(buf, base + h, opt_size);              h = h + 4;  // OptionalDbgHeaderSize
+    _u32_le(buf, base + h, 0);                     h = h + 4;  // ECSubstreamSize
+    _u16_le(buf, base + h, 0);                     h = h + 2;  // Flags
+    _u16_le(buf, base + h, 34404);                 h = h + 2;  // Machine = 0x8664
+    _u32_le(buf, base + h, 0);                     h = h + 4;
+
+    return cast(i32, off);
+}
+
+// === Stream 5: Section Headers ===
+//
+// Verbatim copy of the PE's section table. Each IMAGE_SECTION_HEADER is
+// 40 bytes (name + virt size + virt addr + raw size + raw ptr + 16 zeros
+// for relocs/linenums + characteristics). The PDB consumer expects them in
+// the same on-wire layout the PE itself uses.
+fn _emit_section_headers(buf as *u8, secthdr as *u8, n_sections as i32) as i32 {
+    let is i64 as base = BLOCK_SECTION_HEADERS * BLOCK_SIZE;
+    let is i64 as total = cast(i64, n_sections) * 40;
+    let is i64 as i with mut = 0;
+    while (i < total) {
+        buf[base + i] = secthdr[i];
+        i = i + 1;
+    }
+    return cast(i32, total);
+}
+
+// === Stream 6: Symbol Records ===
+//
+// Concatenated S_PUB32 records (and eventually globals/locals). PE-writer
+// built the byte sequence by walking gsyms; we just stage it.
+fn _emit_symrec(buf as *u8, symrec_bytes as *u8, n as i32) as i32 {
+    let is i64 as base = BLOCK_SYMREC * BLOCK_SIZE;
+    let is i64 as i with mut = 0;
+    while (i < cast(i64, n)) {
+        buf[base + i] = symrec_bytes[i];
+        i = i + 1;
+    }
+    return n;
+}
+
+// === Stream 7: Publics ===
+//
+// PSGSI header + GSI hash header + address map. PE-writer assembled the
+// whole blob (it owns the address sort), so we just copy.
+fn _emit_publics(buf as *u8, publics_bytes as *u8, n as i32) as i32 {
+    let is i64 as base = BLOCK_PUBLICS * BLOCK_SIZE;
+    let is i64 as i with mut = 0;
+    while (i < cast(i64, n)) {
+        buf[base + i] = publics_bytes[i];
+        i = i + 1;
+    }
+    return n;
+}
+
+// === Stream 8: Module Symbol Stream ===
+//
+// CV signature + raw symbol records + C13 line subsections + GlobalRefsSize.
+// PE-writer assembled the whole blob.
+fn _emit_module(buf as *u8, module_bytes as *u8, n as i32) as i32 {
+    let is i64 as base = BLOCK_MODULE * BLOCK_SIZE;
+    let is i64 as i with mut = 0;
+    while (i < cast(i64, n)) {
+        buf[base + i] = module_bytes[i];
+        i = i + 1;
+    }
+    return n;
+}
+
+// === Stream 4: IPI ===
+//
+// Carries LF_FUNC_ID records produced by pe_writer's build_ipi_body
+// (one per defined TEXT-section gsym, VA-sorted). Each LF_FUNC_ID
+// references the universal LF_PROCEDURE in TPI (index 0x1001).
+// The i-th LF_FUNC_ID lives at IPI index 0x1000+i so S_GPROC32_ID
+// records can reference it directly.
+fn _emit_ipi(buf as *u8, ipi_body as *u8, ipi_body_size as i32, num_funcs as i32) as i32 {
+    let is i64 as base = BLOCK_IPI * BLOCK_SIZE;
+    // Header
+    _u32_le(buf, base + 0,  TpiImpvV80);
+    _u32_le(buf, base + 4,  56);
+    _u32_le(buf, base + 8,  4096);                    // TypeIndexBegin
+    _u32_le(buf, base + 12, cast(i64, 4096 + num_funcs)); // TypeIndexEnd
+    _u32_le(buf, base + 16, cast(i64, ipi_body_size));    // TypeRecordBytes
+    _u16_le(buf, base + 20, 65535);
+    _u16_le(buf, base + 22, 65535);
+    _u32_le(buf, base + 24, 4);
+    _u32_le(buf, base + 28, 262144);
+    _u32_le(buf, base + 32, 0);
+    _u32_le(buf, base + 36, 0);
+    _u32_le(buf, base + 40, 0);
+    _u32_le(buf, base + 44, 0);
+    _u32_le(buf, base + 48, 4294967295);
+    _u32_le(buf, base + 52, 0);
+    // Body: copy LF_FUNC_ID records
+    let is i64 as i with mut = 0;
+    while (i < cast(i64, ipi_body_size)) {
+        buf[base + 56 + i] = ipi_body[i];
+        i = i + 1;
+    }
+    return 56 + ipi_body_size;
+}
+
+// === Top-level ===
+
+// Compose the entire 9-block MSF file and write to pdb_path. The guid
+// pointer must point at the same 16-byte sequence the EXE's RSDS record
+// carries; otherwise the debugger refuses to bind sidecar to image.
+fn write_pdb(pdb_path as *u8, guid as *u8,
+             secthdr as *u8, n_sections as i32,
+             symrec_bytes as *u8, symrec_size as i32,
+             publics_bytes as *u8, publics_size as i32,
+             module_bytes as *u8, module_size as i32,
+             module_name as *u8, module_name_len as i32,
+             mod_sym_size as i32, mod_c13_size as i32,
+             text_size as i32,
+             ipi_body as *u8, ipi_body_size as i32,
+             ipi_num_funcs as i32,
+             tpi_body as *u8, tpi_body_size as i32,
+             tpi_num_types as i32) as i32 {
+    let is i64 as total = NUM_BLOCKS * BLOCK_SIZE;
+    let is *u8 as buf = om.opt_alloc(total);
+
+    // Zero everything; FPM block overwrites bytes that should be 0xFF.
+    let is i64 as zi with mut = 0;
+    while (zi < NUM_BLOCKS) {
+        _zero_block(buf, zi);
+        zi = zi + 1;
+    }
+    _emit_fpm(buf, BLOCK_FPM_A);
+    _emit_fpm(buf, BLOCK_FPM_B);
+
+    let is i32 as pdb_info_size = _emit_pdb_info(buf, guid);
+    let is i32 as tpi_size      = _emit_tpi(buf, tpi_body, tpi_body_size, tpi_num_types);
+    let is i32 as dbi_size      = _emit_dbi(buf, module_name, module_name_len,
+                                             mod_sym_size, mod_c13_size, text_size);
+    let is i32 as ipi_size      = _emit_ipi(buf, ipi_body, ipi_body_size, ipi_num_funcs);
+    let is i32 as sh_size       = _emit_section_headers(buf, secthdr, n_sections);
+    let is i32 as sr_size       = _emit_symrec(buf, symrec_bytes, symrec_size);
+    let is i32 as pub_size      = _emit_publics(buf, publics_bytes, publics_size);
+    let is i32 as mod_size      = _emit_module(buf, module_bytes, module_size);
+
+    let is i64 as dir_bytes = _emit_stream_dir(buf, pdb_info_size, tpi_size, dbi_size,
+                                                ipi_size, sh_size, sr_size, pub_size, mod_size);
+    _emit_block_map(buf);
+    _emit_superblock(buf, dir_bytes);
+
+    let is i64 as fd = io._open_write(pdb_path);
+    if (fd < 0) {
+        io._write_fd(io.STDERR, "caustic-ld: cannot create pdb\n", 30);
+        return 1;
+    }
+    io._write_fd(fd, buf, total);
+    io._close_fd(fd);
+    return 0;
+}

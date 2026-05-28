@@ -1,7 +1,8 @@
 use "../std/mem.cst" as mem;
-use "../std/linux.cst" as linux;
+use "../std/io.cst" as io;
 use "../src/ir/opt_mem.cst" as om;
 use "elf_reader.cst" as reader;
+use "coff_reader.cst" as coff_reader;
 use "linker.cst" as linker;
 use "elf_writer.cst" as writer;
 use "pe_writer.cst" as pew;
@@ -41,15 +42,15 @@ fn starts_with(a as *u8, prefix as *u8) as i32 {
 }
 
 fn print_str(s as *u8) as void {
-    linux.write(linux.STDERR, s, strlen(s));
+    io._write_fd(io.STDERR, s, strlen(s));
 }
 
 fn print_out(s as *u8) as void {
-    linux.write(linux.STDOUT, s, strlen(s));
+    io._write_fd(io.STDOUT, s, strlen(s));
 }
 
 fn print_int(n as i64) as void {
-    if (n == 0) { linux.write(linux.STDERR, "0", 1); return; }
+    if (n == 0) { io._write_fd(io.STDERR, "0", 1); return; }
     let is [24]u8 as buf;
     let is i64 as val with mut = n;
     let is i64 as neg with mut = 0;
@@ -62,7 +63,7 @@ fn print_int(n as i64) as void {
     }
     if (neg == 1) { buf[pos] = 45; pos = pos - 1; }
     let is i64 as start = cast(i64, pos) + 1;
-    linux.write(linux.STDERR, cast(*u8, cast(i64, &buf) + start), 24 - start);
+    io._write_fd(io.STDERR, cast(*u8, cast(i64, &buf) + start), 24 - start);
 }
 
 // Parse hex string (after "0x" prefix) to i64
@@ -142,9 +143,9 @@ fn lib_to_soname(name as *u8) as *u8 {
     while (v < 10) {
         path[p + 4] = cast(u8, 48 + v);
         path[p + 5] = 0;
-        let is i64 as fd = linux.open(path, 0, 0);
+        let is i64 as fd = io._open_read(path);
         if (fd >= 0) {
-            linux.close(fd);
+            io._close_fd(fd);
             om.opt_free(path);
             return build_soname(name, name_len, v);
         }
@@ -168,6 +169,24 @@ let is i64 as g_base_addr with mut = 0;    // 0 = use default (0x400000)
 // Library entry point (for integrated pipeline)
 // ============================================================
 
+// Peek the first 2 magic bytes of an .o file and dispatch to the right
+// reader. ELF starts with 0x7F 'E', COFF AMD64 with 0x64 0x86.
+fn read_obj_auto(path as *u8, obj as *reader.ObjFile) as i32 {
+    let is i64 as fd = io._open_read(path);
+    if (fd < 0) {
+        return reader.read_obj(path, obj);  // surface its error message
+    }
+    let is [4]u8 as magic;
+    let is i64 as n = io._read_fd(fd, &magic, 4);
+    io._close_fd(fd);
+    if (n < 2) { return reader.read_obj(path, obj); }
+    if (magic[0] == 100 && magic[1] == 134) {
+        // 0x64 0x86 — COFF AMD64
+        return coff_reader.read_coff_obj(path, obj);
+    }
+    return reader.read_obj(path, obj);
+}
+
 // Link object files into an executable.
 // obj_paths: array of *u8 pointers to .o file paths
 // obj_count: number of object files
@@ -184,11 +203,11 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
     let is i32 as fi with mut = 0;
     while (fi < obj_count) {
         let is *u8 as path = cast(*u8, paths_arr[fi]);
-        let is i64 as fd = linux.open(path, linux.O_RDONLY, 0);
+        let is i64 as fd = io._open_read(path);
         if (fd >= 0) {
-            let is i64 as sz = linux.lseek(fd, 0, linux.SEEK_END);
+            let is i64 as sz = io._lseek(fd, 0, io._SEEK_END);
             total_file_size = total_file_size + sz;
-            linux.close(fd);
+            io._close_fd(fd);
         }
         fi = fi + 1;
     }
@@ -233,7 +252,7 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
         let is *u8 as path = cast(*u8, paths_arr[fi]);
         let is *reader.ObjFile as obj = cast(*reader.ObjFile, om.opt_alloc(sizeof(reader.ObjFile)));
 
-        let is i32 as err = reader.read_obj(path, obj);
+        let is i32 as err = read_obj_auto(path, obj);
         if (err != 0) {
             print_str("caustic-ld: error: failed to read ");
             print_str(path);
@@ -292,6 +311,7 @@ fn main(argc as i64, argv as i64) as i32 {
 
     // Parse CLI args
     let is *u8 as output_path with mut = "a.out";
+    let is i32 as output_explicit with mut = 0;
     let is *u8 as entry_name with mut = "main";
     let is i64 as base_addr with mut = 4194304; // 0x400000
     let is i32 as verbose with mut = 0;
@@ -316,6 +336,7 @@ fn main(argc as i64, argv as i64) as i32 {
             ai = ai + 1;
             if (ai < argc) {
                 output_path = cast(*u8, argv_arr[ai]);
+                output_explicit = 1;
             }
         }
         else if (starts_with(arg, "--entry=") == 1) {
@@ -334,7 +355,7 @@ fn main(argc as i64, argv as i64) as i32 {
                 print_str("caustic-ld: unknown --target\n");
                 return 1;
             }
-            // windows-x86_64 is now wired up via pe_writer.cst (Fase 2.5+).
+            // windows-x86_64 dispatches through pe_writer.cst at link time.
         }
         else if (streq_lit(arg, "--strip") == 1) {
             do_strip = 1;
@@ -385,11 +406,11 @@ fn main(argc as i64, argv as i64) as i32 {
     let is i32 as fi with mut = 0;
     while (fi < num_inputs) {
         let is *u8 as path = cast(*u8, input_files[fi]);
-        let is i64 as fd = linux.open(path, linux.O_RDONLY, 0);
+        let is i64 as fd = io._open_read(path);
         if (fd >= 0) {
-            let is i64 as sz = linux.lseek(fd, 0, linux.SEEK_END);
+            let is i64 as sz = io._lseek(fd, 0, io._SEEK_END);
             total_file_size = total_file_size + sz;
-            linux.close(fd);
+            io._close_fd(fd);
         }
         fi = fi + 1;
     }
@@ -401,10 +422,14 @@ fn main(argc as i64, argv as i64) as i32 {
     }
 
     // Initialize linker state. Windows PE uses 0x140000000 as ImageBase
-    // unless --base= was explicitly set.
+    // unless --base= was explicitly set; output defaults to a.exe instead
+    // of a.out when -o was not given.
     let is *tgt.Target as t_main_init = tgt.target_get();
     if (t_main_init.object_format == 2 && base_addr == 4194304) {
         base_addr = 5368709120;  // 0x140000000
+    }
+    if (t_main_init.object_format == 2 && output_explicit == 0) {
+        output_path = "a.exe";
     }
     let is linker.LinkerState as ls = linker.linker_init(base_addr);
     ls.entry_name = entry_name;
@@ -436,7 +461,7 @@ fn main(argc as i64, argv as i64) as i32 {
         let is *u8 as path = cast(*u8, input_files[fi]);
         let is *reader.ObjFile as obj = cast(*reader.ObjFile, om.opt_alloc(sizeof(reader.ObjFile)));
 
-        let is i32 as err = reader.read_obj(path, obj);
+        let is i32 as err = read_obj_auto(path, obj);
         if (err != 0) {
             print_str("error: failed to read ");
             print_str(path);

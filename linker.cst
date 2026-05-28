@@ -1,5 +1,5 @@
 use "../std/mem.cst" as mem;
-use "../std/linux.cst" as linux;
+use "../std/io.cst" as io;
 use "../src/ir/opt_mem.cst" as om;
 use "../src/codegen/target.cst" as tgt;
 use "elf_reader.cst" as reader;
@@ -241,7 +241,7 @@ fn bytes_eq(a as *u8, a_len as i32, b as *u8, b_len as i32) as i32 {
 // Parse the ".cstimport" custom section from one ObjFile (if present) and
 // accumulate its entries into ls.cstimport_*. Each entry adds one (dll, sym)
 // pair; duplicates across objects collapse via add_cstimport's dedup check.
-// Format per Fase 2.4:
+// Wire format:
 //   u32 count
 //   for each: u32 dll_len, u32 sym_len, bytes[dll_len], bytes[sym_len]
 fn add_cstimport(ls as *LinkerState, dll as *u8, dll_len as i32, sym as *u8, sym_len as i32) as void {
@@ -382,8 +382,7 @@ fn merge_sections(ls as *LinkerState) as void {
 
     // Linux _start stub: emit only for ELF targets. Windows PE has its own
     // entry conventions (no argc/argv on stack) — pe_writer.cst handles the
-    // entry stub separately, and for the simple Fase 2 path we just point
-    // AddressOfEntryPoint directly at main.
+    // entry stub separately and sets AddressOfEntryPoint at link time.
     let is *tgt.Target as t = tgt.target_get();
     if (ls.freestanding == 0 && t.object_format != 2) {
         emit_start_stub(text_buf);
@@ -616,7 +615,7 @@ fn build_symtab(ls as *LinkerState) as i32 {
                     let is *GlobalSym as eg = gsym_get(gsyms, existing);
                     if (eg.defined == 1) {
                         reader.print_str("error: duplicate symbol: ");
-                        linux.write(linux.STDERR, sym.name, cast(i64, sym.name_len));
+                        io._write_fd(io.STDERR, sym.name, cast(i64, sym.name_len));
                         reader.print_str("\n");
                         errors = errors + 1;
                     } else {
@@ -646,7 +645,7 @@ fn build_symtab(ls as *LinkerState) as i32 {
         let is *GlobalSym as g = gsym_get(gsyms, gi);
         if (g.defined == 0 && ls.needed_count == 0) {
             reader.print_str("warning: undefined symbol: ");
-            linux.write(linux.STDERR, g.name, cast(i64, g.name_len));
+            io._write_fd(io.STDERR, g.name, cast(i64, g.name_len));
             reader.print_str("\n");
         }
         gi = gi + 1;
@@ -902,15 +901,15 @@ fn write_map(ls as *LinkerState, output_path as *u8) as void {
     map_path[path_len + 3] = 112;
     map_path[path_len + 4] = 0;
 
-    let is i64 as fd = linux.open(map_path, 577, 420);
+    let is i64 as fd = io._open_write(map_path);
     if (fd < 0) {
         reader.print_str("warning: cannot create map file\n");
         om.opt_free(map_path);
         return;
     }
 
-    linux.write(fd, "Address            Type  Name\n", 30);
-    linux.write(fd, "----------------------------------------------\n", 47);
+    io._write_fd(fd, "Address            Type  Name\n", 30);
+    io._write_fd(fd, "----------------------------------------------\n", 47);
 
     write_map_entry(fd, ls.text_vaddr, 84, "_start");
 
@@ -928,7 +927,7 @@ fn write_map(ls as *LinkerState, output_path as *u8) as void {
         gi = gi + 1;
     }
 
-    linux.close(fd);
+    io._close_fd(fd);
     om.opt_free(map_path);
 }
 
@@ -944,17 +943,17 @@ fn write_hex_to_fd(fd as i64, val as i64) as void {
         v = v >> 4;
         vi = vi + 1;
     }
-    linux.write(fd, &buf[0], 18);
+    io._write_fd(fd, &buf[0], 18);
 }
 
 fn write_map_entry(fd as i64, addr as i64, type_char as i32, name as *u8) as void {
     write_hex_to_fd(fd, addr);
-    linux.write(fd, "  ", 2);
+    io._write_fd(fd, "  ", 2);
     let is u8 as tc = cast(u8, type_char);
-    linux.write(fd, &tc, 1);
-    linux.write(fd, "     ", 5);
-    linux.write(fd, name, reader.strlen(name));
-    linux.write(fd, "\n", 1);
+    io._write_fd(fd, &tc, 1);
+    io._write_fd(fd, "     ", 5);
+    io._write_fd(fd, name, reader.strlen(name));
+    io._write_fd(fd, "\n", 1);
 }
 
 // ============================================================
@@ -1046,7 +1045,7 @@ fn collect_dynamic_syms(ls as *LinkerState) as void {
             dynsym_add(dst, g.name, g.name_len);
             if (ls.verbose == 1) {
                 reader.print_str("  dynamic sym: ");
-                linux.write(linux.STDERR, g.name, cast(i64, g.name_len));
+                io._write_fd(io.STDERR, g.name, cast(i64, g.name_len));
                 reader.print_str("\n");
             }
         }
