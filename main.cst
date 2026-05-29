@@ -6,6 +6,7 @@ use "coff_reader.cst" as coff_reader;
 use "linker.cst" as linker;
 use "elf_writer.cst" as writer;
 use "pe_writer.cst" as pew;
+use "cse_writer.cst" as csew;
 use "../src/codegen/target.cst" as tgt;
 
 // ============================================================
@@ -194,6 +195,14 @@ fn read_obj_auto(path as *u8, obj as *reader.ObjFile) as i32 {
 // lib_names: array of *u8 pointers to library names (e.g. "c", "m")
 // lib_count: number of libraries
 // Caller must have initialized the heap before calling this.
+// Public entry for the compiler driver's one-command CSE polyglot
+// orchestration: weld three finished executables (windows PE + linux ELF +
+// caustic CST) into one tri-format APE. Delegates to the cse_writer combiner.
+fn cse_combine_files(pe_path as *u8, elf_path as *u8, cst_path as *u8,
+                     output_path as *u8) as i32 {
+    return csew.write_cse_combine_ape(pe_path, elf_path, cst_path, output_path);
+}
+
 fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
              lib_names as *u8, lib_count as i32) as i32 {
     let is *i64 as paths_arr = cast(*i64, obj_paths);
@@ -281,7 +290,11 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
     // which handles apply_relocations internally (it must run AFTER
     // __imp_<sym> gsyms are registered so PC32 reloc resolves to IAT).
     let is *tgt.Target as t = tgt.target_get();
-    if (t.object_format == 2) {
+    if (t.object_format == 3) {
+        // CSE (Caustic Standard Executable). write_cse runs relocation and
+        // dispatches by --mode internally (like the PE writer).
+        write_err = csew.write_cse(&ls, output_path);
+    } else if (t.object_format == 2) {
         linker.collect_all_cstimports(&ls);
         write_err = pew.write_pe_executable(&ls, output_path);
     } else if (ls.needed_count > 0) {
@@ -312,6 +325,13 @@ fn main(argc as i64, argv as i64) as i32 {
     // Parse CLI args
     let is *u8 as output_path with mut = "a.out";
     let is i32 as output_explicit with mut = 0;
+
+    // --cse-combine: weld a windows PE + linux ELF + caustic CST into one
+    // tri-format APE polyglot (no normal linking is performed in this mode).
+    let is i32 as cse_combine with mut = 0;
+    let is *u8 as cse_pe_path with mut = cast(*u8, 0);
+    let is *u8 as cse_elf_path with mut = cast(*u8, 0);
+    let is *u8 as cse_cst_path with mut = cast(*u8, 0);
     let is *u8 as entry_name with mut = "main";
     let is i64 as base_addr with mut = 4194304; // 0x400000
     let is i32 as verbose with mut = 0;
@@ -357,6 +377,33 @@ fn main(argc as i64, argv as i64) as i32 {
             }
             // windows-x86_64 dispatches through pe_writer.cst at link time.
         }
+        else if (streq_lit(arg, "--cse-combine") == 1) {
+            cse_combine = 1;
+        }
+        else if (starts_with(arg, "--pe=") == 1) {
+            cse_pe_path = cast(*u8, cast(i64, arg) + 5);
+        }
+        else if (starts_with(arg, "--elf=") == 1) {
+            cse_elf_path = cast(*u8, cast(i64, arg) + 6);
+        }
+        else if (starts_with(arg, "--cst=") == 1) {
+            cse_cst_path = cast(*u8, cast(i64, arg) + 6);
+        }
+        else if (starts_with(arg, "--mode=") == 1) {
+            // CSE output mode (only meaningful with --target=caustic-x86_64).
+            let is *u8 as v = cast(*u8, cast(i64, arg) + 7);
+            if (streq_lit(v, "pure") == 1) { tgt.cse_mode_set(0); }
+            else if (streq_lit(v, "compat") == 1) { tgt.cse_mode_set(1); }
+            else if (streq_lit(v, "bundle") == 1) { tgt.cse_mode_set(2); }
+            else { print_str("caustic-ld: unknown --mode (pure|compat|bundle)\n"); return 1; }
+        }
+        else if (starts_with(arg, "--extension=") == 1) {
+            let is *u8 as v = cast(*u8, cast(i64, arg) + 12);
+            if (streq_lit(v, "cse") == 1) { tgt.cse_extension_set(0); }
+            else if (streq_lit(v, "exe") == 1) { tgt.cse_extension_set(1); }
+            else if (streq_lit(v, "com") == 1) { tgt.cse_extension_set(2); }
+            else { print_str("caustic-ld: unknown --extension (cse|exe|com)\n"); return 1; }
+        }
         else if (streq_lit(arg, "--strip") == 1) {
             do_strip = 1;
         }
@@ -394,6 +441,16 @@ fn main(argc as i64, argv as i64) as i32 {
         }
 
         ai = ai + 1;
+    }
+
+    // --cse-combine: weld three finished executables into one APE polyglot and
+    // exit (no object linking).
+    if (cse_combine == 1) {
+        if (cast(i64, cse_pe_path) == 0 || cast(i64, cse_elf_path) == 0) {
+            print_str("caustic-ld: --cse-combine needs --pe=<file> and --elf=<file> (and optional --cst=<file>)\n");
+            return 1;
+        }
+        return csew.write_cse_combine_ape(cse_pe_path, cse_elf_path, cse_cst_path, output_path);
     }
 
     if (num_inputs == 0) {
@@ -537,7 +594,11 @@ fn main(argc as i64, argv as i64) as i32 {
 
     // PE/Windows path: collect cstimport from objects, dispatch to PE writer.
     let is *tgt.Target as t_main = tgt.target_get();
-    if (t_main.object_format == 2) {
+    if (t_main.object_format == 3) {
+        // CSE (Caustic Standard Executable) — relocation + mode dispatch
+        // happen inside write_cse.
+        write_err = csew.write_cse(&ls, output_path);
+    } else if (t_main.object_format == 2) {
         linker.collect_all_cstimports(&ls);
         write_err = pew.write_pe_executable(&ls, output_path);
     } else if (ls.needed_count > 0) {
