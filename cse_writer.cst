@@ -69,7 +69,8 @@ fn cse_write_buf_to_file(out as *reader.ByteBuffer, output_path as *u8) as i32 {
 //     0x00 4  "CST_"      0x04 2 version=2   0x06 1 arch   0x07 1 flags
 //     0x08 8  entry_point (abs vaddr)
 //     0x10 8  base_addr
-//     0x18 4  seg_count   0x1C 4 reserved
+//     0x18 4  seg_count   0x1C 4 app_version_off (file offset of a NUL-term
+//                                version string; 0 = none)
 //   Segment table: seg_count * 24 bytes, from 0x20:
 //     +0x00 8 vaddr   +0x08 4 file_off (rel to image, 0 if bss)
 //     +0x0C 4 file_size   +0x10 4 mem_size   +0x14 4 perms (1=R 2=W 4=X)
@@ -128,6 +129,14 @@ fn cse_emit_cst_v2(out as *reader.ByteBuffer, ls as *linker.LinkerState) as void
         i = i + 1;
     }
 
+    // Optional free-form program version: a NUL-terminated string appended
+    // after the segment data. The header @0x1C holds its file offset (0 if
+    // unset). `cursor` is the end of segment data = where it will go.
+    let is *u8 as ver_ptr = tgt.app_version_ptr_get();
+    let is i32 as ver_len = tgt.app_version_len_get();
+    let is i64 as ver_off with mut = 0;
+    if (ver_len > 0) { ver_off = cursor; }
+
     // Header.
     reader.buf_emit8(out, 67); reader.buf_emit8(out, 83);
     reader.buf_emit8(out, 84); reader.buf_emit8(out, 95);   // "CST_"
@@ -137,7 +146,7 @@ fn cse_emit_cst_v2(out as *reader.ByteBuffer, ls as *linker.LinkerState) as void
     reader.buf_emit64_le(out, ls.entry_vaddr);     // entry_point
     reader.buf_emit64_le(out, ls.base_addr);       // base_addr
     reader.buf_emit32_le(out, cast(i64, n));       // seg_count
-    reader.buf_emit32_le(out, 0);                  // reserved
+    reader.buf_emit32_le(out, ver_off);            // 0x1C app_version file offset (0 = none)
 
     // Segment table.
     i = 0;
@@ -155,6 +164,12 @@ fn cse_emit_cst_v2(out as *reader.ByteBuffer, ls as *linker.LinkerState) as void
     while (i < n) {
         if (sfsz[i] > 0) { reader.buf_append(out, cast(*u8, sptr[i]), sfsz[i]); }
         i = i + 1;
+    }
+
+    // Append the version string (NUL-terminated) at ver_off.
+    if (ver_len > 0) {
+        reader.buf_append(out, ver_ptr, cast(i64, ver_len));
+        reader.buf_emit8(out, 0);
     }
 }
 
