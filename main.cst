@@ -4,6 +4,7 @@ use "../src/ir/opt_mem.cst" as om;
 use "elf_reader.cst" as reader;
 use "coff_reader.cst" as coff_reader;
 use "linker.cst" as linker;
+use "link_dynamic.cst" as ldyn;
 use "elf_writer.cst" as writer;
 use "pe_writer.cst" as pew;
 use "cse_writer.cst" as csew;
@@ -307,7 +308,7 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
         write_err = pew.write_pe_executable(&ls, output_path);
     } else if (ls.needed_count > 0) {
         linker.collect_dynamic_syms(&ls);
-        linker.alloc_dynamic_bufs(&ls);
+        ldyn.alloc_dynamic_bufs(&ls);
         write_err = writer.write_dynamic_executable(&ls, output_path);
     } else {
         linker.apply_relocations(&ls);
@@ -634,7 +635,7 @@ fn main(argc as i64, argv as i64) as i32 {
         linker.collect_dynamic_syms(&ls);
 
         // Allocate dynamic section buffers
-        linker.alloc_dynamic_bufs(&ls);
+        ldyn.alloc_dynamic_bufs(&ls);
 
         // The dynamic writer handles address reassignment, PLT/GOT building,
         // symtab rebuild, relocation application, and metadata generation
