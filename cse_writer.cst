@@ -427,10 +427,114 @@ fn write_cse_combine_ape(pe_path as *u8, elf_path as *u8, cst_path as *u8,
     return cse_write_buf_to_file(&out, output_path);
 }
 
+// === .csl — Caustic Standard Library (shared lib, CSE family) =========
+// A CSL_ image: CST_ v2-style segment table + an EXPORT table (name->vaddr)
+// so our loader can resolve a program's stdlib imports. No entry point.
+// flags bit 0: 0 = pure (CausticOS only), 1 = compat (polyglot, our loader).
+//   Header (32 bytes):
+//     0x00 4 "CSL_"  0x04 2 version  0x06 1 arch  0x07 1 flags
+//     0x08 8 base_addr   0x10 4 seg_count   0x14 4 export_count   0x18 8 export_off
+//   Segment table: seg_count * 24 (vaddr, file_off, file_size, mem_size, perms)
+//   Packed segment bytes.
+//   Export table @export_off: export_count * 12 (name_off u32, vaddr u64),
+//     then a packed NUL-terminated string blob (name_off is an abs file offset).
+fn cse_emit_csl_image(out as *reader.ByteBuffer, ls as *linker.LinkerState, flags as i32) as void {
+    let is *reader.ByteBuffer as text_buf = linker.get_text(ls);
+    let is *reader.ByteBuffer as rodata_buf = linker.get_rodata(ls);
+    let is *reader.ByteBuffer as data_buf = linker.get_data(ls);
+    let is *linker.GlobalSymTab as gsyms = linker.get_gsyms(ls);
+
+    let is [40]i64 as sv;
+    let is [40]i64 as sptr;
+    let is [40]i64 as sfsz;
+    let is [40]i64 as smsz;
+    let is [40]i32 as sperm;
+    let is i32 as n with mut = 0;
+    if (ls.text_size > 0) { sv[n] = ls.text_vaddr; sptr[n] = cast(i64, text_buf.data); sfsz[n] = ls.text_size; smsz[n] = ls.text_size; sperm[n] = 5; n = n + 1; }
+    if (ls.rodata_size > 0) { sv[n] = ls.rodata_vaddr; sptr[n] = cast(i64, rodata_buf.data); sfsz[n] = ls.rodata_size; smsz[n] = ls.rodata_size; sperm[n] = 1; n = n + 1; }
+    if (ls.data_size > 0) { sv[n] = ls.data_vaddr; sptr[n] = cast(i64, data_buf.data); sfsz[n] = ls.data_size; smsz[n] = ls.data_size; sperm[n] = 3; n = n + 1; }
+    if (ls.bss_total > 0) { sv[n] = ls.bss_vaddr; sptr[n] = 0; sfsz[n] = 0; smsz[n] = ls.bss_total; sperm[n] = 3; n = n + 1; }
+
+    let is i32 as ne with mut = 0;
+    let is i32 as gi with mut = 0;
+    while (gi < gsyms.count) {
+        let is *linker.GlobalSym as g = linker.gsym_get(gsyms, gi);
+        if (g.defined == 1 && g.name_len > 0 && g.section == 1) { ne = ne + 1; }
+        gi = gi + 1;
+    }
+
+    let is [40]i64 as sfoff;
+    let is i64 as cursor with mut = 32 + cast(i64, n) * 24;
+    let is i32 as i with mut = 0;
+    while (i < n) {
+        if (sfsz[i] > 0) { sfoff[i] = cursor; cursor = cursor + sfsz[i]; } else { sfoff[i] = 0; }
+        i = i + 1;
+    }
+    let is i64 as export_off = cursor;
+    let is i64 as estr_off = export_off + cast(i64, ne) * 12;
+
+    reader.buf_emit8(out, 67); reader.buf_emit8(out, 83); reader.buf_emit8(out, 76); reader.buf_emit8(out, 95);  // "CSL_"
+    reader.buf_emit16_le(out, 1);
+    reader.buf_emit8(out, CSE_ARCH_X86_64);
+    reader.buf_emit8(out, flags);
+    reader.buf_emit64_le(out, ls.base_addr);
+    reader.buf_emit32_le(out, cast(i64, n));
+    reader.buf_emit32_le(out, cast(i64, ne));
+    reader.buf_emit64_le(out, export_off);
+
+    i = 0;
+    while (i < n) {
+        reader.buf_emit64_le(out, sv[i]);
+        reader.buf_emit32_le(out, sfoff[i]);
+        reader.buf_emit32_le(out, sfsz[i]);
+        reader.buf_emit32_le(out, smsz[i]);
+        reader.buf_emit32_le(out, cast(i64, sperm[i]));
+        i = i + 1;
+    }
+    i = 0;
+    while (i < n) { if (sfsz[i] > 0) { reader.buf_append(out, cast(*u8, sptr[i]), sfsz[i]); } i = i + 1; }
+
+    // export entries
+    let is i64 as cur_str with mut = 0;
+    gi = 0;
+    while (gi < gsyms.count) {
+        let is *linker.GlobalSym as g = linker.gsym_get(gsyms, gi);
+        if (g.defined == 1 && g.name_len > 0 && g.section == 1) {
+            reader.buf_emit32_le(out, estr_off + cur_str);
+            reader.buf_emit64_le(out, g.vaddr);
+            cur_str = cur_str + cast(i64, g.name_len) + 1;
+        }
+        gi = gi + 1;
+    }
+    // string blob
+    gi = 0;
+    while (gi < gsyms.count) {
+        let is *linker.GlobalSym as g = linker.gsym_get(gsyms, gi);
+        if (g.defined == 1 && g.name_len > 0 && g.section == 1) {
+            reader.buf_append(out, g.name, cast(i64, g.name_len));
+            reader.buf_emit8(out, 0);
+        }
+        gi = gi + 1;
+    }
+}
+
+fn write_csl(ls as *linker.LinkerState, output_path as *u8, flags as i32) as i32 {
+    linker.apply_relocations(ls);
+    let is reader.ByteBuffer as out = reader.buf_init(65536);
+    cse_emit_csl_image(&out, ls, flags);
+    return cse_write_buf_to_file(&out, output_path);
+}
+
 // Mode dispatcher: relocation + per-mode emission (mirrors the PE writer,
 // which also owns relocation internally).
 fn write_cse(ls as *linker.LinkerState, output_path as *u8) as i32 {
     let is i32 as mode = tgt.cse_mode_get();
+    if (ls.is_shared == 1) {
+        // .csl shared library: pure (mode 0) or compat (mode 1/2) flag.
+        let is i32 as flags with mut = 0;
+        if (mode != 0) { flags = 1; }
+        return write_csl(ls, output_path, flags);
+    }
     if (mode == 0) { return write_cse_pure(ls, output_path); }
     if (mode == 1) { return write_cse_selfextract(ls, output_path); }  // compat
     if (mode == 2) { return write_cse_selfextract(ls, output_path); }  // bundle
