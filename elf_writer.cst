@@ -2,6 +2,7 @@ use "../std/mem.cst" as mem;
 use "../std/io.cst" as io;
 use "elf_reader.cst" as reader;
 use "linker.cst" as linker;
+use "../src/ir/opt_mem.cst" as om;
 
 // ============================================================
 // elf_writer.cst — Write ELF64 executable
@@ -345,6 +346,207 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
                    0, meta.shstrtab_file_off, meta.shstrtab.len, 0, 0, 1, 0);
     }
 
+    return write_buf_to_file(&out, output_path);
+}
+
+// SysV ELF hash (DT_HASH) — ld-linux uses it to resolve symbols at load time.
+fn elf_hash(name as *u8, len as i32) as i64 {
+    let is i64 as h with mut = 0;
+    let is i32 as i with mut = 0;
+    while (i < len) {
+        h = (h << 4) + cast(i64, name[i]);
+        let is i64 as g = h & 4026531840;          // 0xf0000000
+        if (g != 0) { h = h ^ (g >> 24); }
+        h = h & (g ^ (0 - 1));                      // h &= ~g
+        i = i + 1;
+    }
+    return h;
+}
+
+// ============================================================
+// Shared object (ET_DYN) — libcaustic.so producer (--shared)
+// ============================================================
+//
+// Emits a real ELF ET_DYN: PT_LOAD(R+X) [.text .rodata .dynsym .dynstr] +
+// PT_LOAD(R+W) [.data .dynamic] + PT_DYNAMIC, with every DEFINED global symbol
+// exported in .dynsym. base_addr is 0 (position-independent: the code is fully
+// PC-relative, so it runs at any load bias and needs no runtime relocation).
+// Section headers are included so readelf --dyn-syms / -d / -hSl recognise it.
+// A Caustic program imports from it via `extern fn` + `-lcaustic`; the loader
+// maps the segments at a base B and resolves each export to B + st_value.
+fn write_shared_object(ls as *linker.LinkerState, output_path as *u8) as i32 {
+    let is reader.ByteBuffer as out = reader.buf_init(131072);
+    let is *reader.ByteBuffer as text_buf = linker.get_text(ls);
+    let is *reader.ByteBuffer as rodata_buf = linker.get_rodata(ls);
+    let is *reader.ByteBuffer as data_buf = linker.get_data(ls);
+    let is *linker.GlobalSymTab as gsyms = linker.get_gsyms(ls);
+
+    // --- Build .dynstr + .dynsym for every defined global (exports) ---
+    let is reader.ByteBuffer as dynstr = reader.buf_init(8192);
+    let is reader.ByteBuffer as dynsym = reader.buf_init(8192);
+    reader.buf_emit8(&dynstr, 0);                 // .dynstr[0] = '\0'
+    let is i32 as zz with mut = 0;
+    while (zz < 24) { reader.buf_emit8(&dynsym, 0); zz = zz + 1; }   // null Elf64_Sym
+
+    let is i32 as nexport with mut = 0;
+    let is i32 as gi with mut = 0;
+    while (gi < gsyms.count) {
+        let is *linker.GlobalSym as g = cast(*linker.GlobalSym,
+            cast(i64, gsyms.data) + cast(i64, gi) * sizeof(linker.GlobalSym));
+        if (g.defined == 1 && g.name_len > 0) {
+            let is i64 as nameoff = cast(i64, dynstr.len);
+            reader.buf_append(&dynstr, g.name, cast(i64, g.name_len));
+            reader.buf_emit8(&dynstr, 0);
+            // st_shndx (our section-header indices): 1=text 2=rodata 5=data 7=bss
+            let is i32 as shndx with mut = 1;
+            let is i32 as stt with mut = 2;            // STT_FUNC
+            if (g.section == 3) { shndx = 2; stt = 1; }
+            if (g.section == 2) { shndx = 6; stt = 1; }
+            if (g.section == 4) { shndx = 8; stt = 1; }
+            reader.buf_emit32_le(&dynsym, nameoff);    // st_name
+            reader.buf_emit8(&dynsym, (1 << 4) + stt); // st_info = GLOBAL|stt
+            reader.buf_emit8(&dynsym, 0);              // st_other
+            reader.buf_emit16_le(&dynsym, shndx);      // st_shndx
+            reader.buf_emit64_le(&dynsym, g.vaddr);    // st_value (bias-relative)
+            reader.buf_emit64_le(&dynsym, 0);          // st_size
+            nexport = nexport + 1;
+        }
+        gi = gi + 1;
+    }
+    let is i64 as dynsym_size = cast(i64, dynsym.len);
+    let is i64 as dynstr_size = cast(i64, dynstr.len);
+
+    // --- Build SysV .hash (DT_HASH) over the exports (ld-linux needs it) ---
+    let is i32 as nsyms = nexport + 1;          // includes null entry at index 0
+    let is i32 as nbucket with mut = nexport;
+    if (nbucket < 1) { nbucket = 1; }
+    let is *i32 as buckets = cast(*i32, om.opt_alloc(cast(i64, nbucket) * 4));
+    let is *i32 as chain = cast(*i32, om.opt_alloc(cast(i64, nsyms) * 4));
+    let is i32 as zb with mut = 0;
+    while (zb < nbucket) { buckets[zb] = 0; zb = zb + 1; }
+    zb = 0;
+    while (zb < nsyms) { chain[zb] = 0; zb = zb + 1; }
+    let is i32 as hidx with mut = 1;
+    let is i32 as hgi with mut = 0;
+    while (hgi < gsyms.count) {
+        let is *linker.GlobalSym as hg = cast(*linker.GlobalSym,
+            cast(i64, gsyms.data) + cast(i64, hgi) * sizeof(linker.GlobalSym));
+        if (hg.defined == 1 && hg.name_len > 0) {
+            let is i64 as hv = elf_hash(hg.name, hg.name_len);
+            let is i32 as b = cast(i32, hv % cast(i64, nbucket));
+            chain[hidx] = buckets[b];
+            buckets[b] = hidx;
+            hidx = hidx + 1;
+        }
+        hgi = hgi + 1;
+    }
+    let is reader.ByteBuffer as hashb = reader.buf_init(256);
+    reader.buf_emit32_le(&hashb, cast(i64, nbucket));
+    reader.buf_emit32_le(&hashb, cast(i64, nsyms));
+    let is i32 as he with mut = 0;
+    while (he < nbucket) { reader.buf_emit32_le(&hashb, cast(i64, buckets[he])); he = he + 1; }
+    he = 0;
+    while (he < nsyms) { reader.buf_emit32_le(&hashb, cast(i64, chain[he])); he = he + 1; }
+    let is i64 as hash_size = cast(i64, hashb.len);
+
+    // --- Flat layout: file offset == vaddr for all loaded content, so every
+    // PT_LOAD trivially satisfies p_vaddr % page == p_offset % page (ld-linux
+    // rejects otherwise). text/rodata/data/bss keep the vaddrs assign_addresses
+    // gave them (PC-relative relocs depend on them); the dynamic metadata
+    // (.hash .dynsym .dynstr .dynamic) lives in its own page after bss. ---
+    let is i64 as text_vaddr = ls.text_vaddr;
+    let is i64 as text_end = text_vaddr + ls.text_size;
+
+    let is i32 as has_rw with mut = 0;
+    if (ls.rodata_size > 0 || ls.data_size > 0 || ls.bss_total > 0) { has_rw = 1; }
+    let is i64 as rw_start with mut = 0;
+    let is i64 as rw_file_end with mut = 0;
+    let is i64 as rw_mem_end with mut = 0;
+    if (has_rw == 1) {
+        if (ls.rodata_size > 0) { rw_start = ls.rodata_vaddr; }
+        else { if (ls.data_size > 0) { rw_start = ls.data_vaddr; } else { rw_start = ls.bss_vaddr; } }
+        rw_file_end = rw_start;
+        if (ls.rodata_size > 0) { if (ls.rodata_vaddr + ls.rodata_size > rw_file_end) { rw_file_end = ls.rodata_vaddr + ls.rodata_size; } }
+        if (ls.data_size > 0) { if (ls.data_vaddr + ls.data_size > rw_file_end) { rw_file_end = ls.data_vaddr + ls.data_size; } }
+        rw_mem_end = rw_file_end;
+        if (ls.bss_total > 0) { if (ls.bss_vaddr + ls.bss_total > rw_mem_end) { rw_mem_end = ls.bss_vaddr + ls.bss_total; } }
+    }
+
+    let is i64 as image_mem_end with mut = text_end;
+    if (has_rw == 1) { if (rw_mem_end > image_mem_end) { image_mem_end = rw_mem_end; } }
+
+    let is i64 as hash_vaddr = align_up(image_mem_end, PAGE_SIZE);
+    let is i64 as dynsym_vaddr = align_up(hash_vaddr + hash_size, 8);
+    let is i64 as dynstr_vaddr = dynsym_vaddr + dynsym_size;
+    let is i64 as dynamic_vaddr = align_up(dynstr_vaddr + dynstr_size, 8);
+
+    // .dynamic: DT_HASH(4) DT_SYMTAB(6) DT_STRTAB(5) DT_STRSZ(10) DT_SYMENT(11) DT_NULL(0)
+    let is reader.ByteBuffer as dynamic = reader.buf_init(256);
+    reader.buf_emit64_le(&dynamic, 4); reader.buf_emit64_le(&dynamic, hash_vaddr);    // DT_HASH
+    reader.buf_emit64_le(&dynamic, 6); reader.buf_emit64_le(&dynamic, dynsym_vaddr);  // DT_SYMTAB
+    reader.buf_emit64_le(&dynamic, 5); reader.buf_emit64_le(&dynamic, dynstr_vaddr);  // DT_STRTAB
+    reader.buf_emit64_le(&dynamic, 10); reader.buf_emit64_le(&dynamic, dynstr_size);  // DT_STRSZ
+    reader.buf_emit64_le(&dynamic, 11); reader.buf_emit64_le(&dynamic, 24);           // DT_SYMENT
+    reader.buf_emit64_le(&dynamic, 0); reader.buf_emit64_le(&dynamic, 0);             // DT_NULL
+    let is i64 as dynamic_size = cast(i64, dynamic.len);
+    let is i64 as meta_end = dynamic_vaddr + dynamic_size;
+
+    // --- shstrtab ---
+    let is reader.ByteBuffer as shstr = reader.buf_init(128);
+    reader.buf_emit8(&shstr, 0);
+    let is i64 as nm_text = cast(i64, shstr.len);     reader.buf_append(&shstr, ".text", 5); reader.buf_emit8(&shstr, 0);
+    let is i64 as nm_rodata = cast(i64, shstr.len);   reader.buf_append(&shstr, ".rodata", 7); reader.buf_emit8(&shstr, 0);
+    let is i64 as nm_hash = cast(i64, shstr.len);     reader.buf_append(&shstr, ".hash", 5); reader.buf_emit8(&shstr, 0);
+    let is i64 as nm_dynsym = cast(i64, shstr.len);   reader.buf_append(&shstr, ".dynsym", 7); reader.buf_emit8(&shstr, 0);
+    let is i64 as nm_dynstr = cast(i64, shstr.len);   reader.buf_append(&shstr, ".dynstr", 7); reader.buf_emit8(&shstr, 0);
+    let is i64 as nm_data = cast(i64, shstr.len);     reader.buf_append(&shstr, ".data", 5); reader.buf_emit8(&shstr, 0);
+    let is i64 as nm_dynamic = cast(i64, shstr.len);  reader.buf_append(&shstr, ".dynamic", 8); reader.buf_emit8(&shstr, 0);
+    let is i64 as nm_bss = cast(i64, shstr.len);      reader.buf_append(&shstr, ".bss", 4); reader.buf_emit8(&shstr, 0);
+    let is i64 as nm_shstr = cast(i64, shstr.len);    reader.buf_append(&shstr, ".shstrtab", 9); reader.buf_emit8(&shstr, 0);
+    let is i64 as shstr_foff = align_up(meta_end, 8);
+    let is i64 as shdr_foff = align_up(shstr_foff + cast(i64, shstr.len), 8);
+
+    let is i32 as nph with mut = 3;          // R+X, meta(R+W), PT_DYNAMIC
+    if (has_rw == 1) { nph = 4; }
+
+    // === Write it out (flat: file offset == vaddr for loaded content) ===
+    write_elf_header(&out, ET_DYN, 0, ELF_HDR_SIZE, shdr_foff, nph, 10, 9);
+    write_phdr(&out, PT_LOAD, PF_R + PF_X, 0, 0, 0, text_end, text_end, PAGE_SIZE);
+    if (has_rw == 1) {
+        write_phdr(&out, PT_LOAD, PF_R + PF_W, rw_start, rw_start, rw_start, rw_file_end - rw_start, rw_mem_end - rw_start, PAGE_SIZE);
+    }
+    write_phdr(&out, PT_LOAD, PF_R + PF_W, hash_vaddr, hash_vaddr, hash_vaddr, meta_end - hash_vaddr, meta_end - hash_vaddr, PAGE_SIZE);
+    write_phdr(&out, PT_DYNAMIC, PF_R + PF_W, dynamic_vaddr, dynamic_vaddr, dynamic_vaddr, dynamic_size, dynamic_size, 8);
+
+    // file content (flat: pad_to each vaddr, then append)
+    reader.buf_pad_to(&out, text_vaddr);   reader.buf_append(&out, text_buf.data, ls.text_size);
+    if (ls.rodata_size > 0) { reader.buf_pad_to(&out, ls.rodata_vaddr); reader.buf_append(&out, rodata_buf.data, ls.rodata_size); }
+    if (ls.data_size > 0) { reader.buf_pad_to(&out, ls.data_vaddr); reader.buf_append(&out, data_buf.data, ls.data_size); }
+    reader.buf_pad_to(&out, hash_vaddr);    reader.buf_append(&out, hashb.data, hash_size);
+    reader.buf_pad_to(&out, dynsym_vaddr);  reader.buf_append(&out, dynsym.data, dynsym_size);
+    reader.buf_pad_to(&out, dynstr_vaddr);  reader.buf_append(&out, dynstr.data, dynstr_size);
+    reader.buf_pad_to(&out, dynamic_vaddr); reader.buf_append(&out, dynamic.data, dynamic_size);
+    // shstrtab + section headers (not loaded)
+    reader.buf_pad_to(&out, shstr_foff); reader.buf_append(&out, shstr.data, cast(i64, shstr.len));
+    reader.buf_pad_to(&out, shdr_foff);
+    let is i64 as rod_off with mut = 0;
+    if (ls.rodata_size > 0) { rod_off = ls.rodata_vaddr; }
+    let is i64 as dat_off with mut = 0;
+    if (ls.data_size > 0) { dat_off = ls.data_vaddr; }
+    write_null_shdr(&out);
+    write_shdr(&out, nm_text, 1, 6, text_vaddr, text_vaddr, ls.text_size, 0, 0, 16, 0);                 // 1 .text
+    write_shdr(&out, nm_rodata, 1, 2, ls.rodata_vaddr, rod_off, ls.rodata_size, 0, 0, 1, 0);            // 2 .rodata
+    write_shdr(&out, nm_hash, 5, 2, hash_vaddr, hash_vaddr, hash_size, 4, 0, 8, 4);                     // 3 .hash (link=.dynsym 4)
+    write_shdr(&out, nm_dynsym, 11, 2, dynsym_vaddr, dynsym_vaddr, dynsym_size, 5, 1, 8, 24);           // 4 .dynsym (link=.dynstr 5)
+    write_shdr(&out, nm_dynstr, 3, 2, dynstr_vaddr, dynstr_vaddr, dynstr_size, 0, 0, 1, 0);             // 5 .dynstr
+    write_shdr(&out, nm_data, 1, 3, ls.data_vaddr, dat_off, ls.data_size, 0, 0, 8, 0);                  // 6 .data
+    write_shdr(&out, nm_dynamic, 6, 3, dynamic_vaddr, dynamic_vaddr, dynamic_size, 5, 0, 8, 16);        // 7 .dynamic (link=.dynstr 5)
+    write_shdr(&out, nm_bss, 8, 3, ls.bss_vaddr, 0, ls.bss_total, 0, 0, 8, 0);                          // 8 .bss
+    write_shdr(&out, nm_shstr, 3, 0, 0, shstr_foff, cast(i64, shstr.len), 0, 0, 1, 0);                  // 9 .shstrtab
+
+    reader.print_str("caustic-ld: ");
+    reader.print_int(cast(i64, nexport));
+    reader.print_str(" exported symbols\n");
     return write_buf_to_file(&out, output_path);
 }
 

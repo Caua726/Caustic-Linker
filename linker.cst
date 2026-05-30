@@ -104,6 +104,7 @@ struct LinkerState {
     do_map as i32;
     keep_empty as i32;
     freestanding as i32;
+    is_shared as i32;       // 1 when emitting a .so/.dll (no entry, base 0)
 
     // Custom sections (merged)
     csec_bufs as *u8;      // array of *reader.ByteBuffer (up to 32)
@@ -191,6 +192,7 @@ fn linker_init(base_addr as i64) as LinkerState {
     ls.do_map = 0;
     ls.keep_empty = 0;
     ls.freestanding = 0;
+    ls.is_shared = 0;
     ls.needed_libs = cast(*u8, 0);
     ls.needed_count = 0;
     ls.dynsyms = cast(*u8, 0);
@@ -657,7 +659,8 @@ fn build_symtab(ls as *LinkerState) as i32 {
         gi = gi + 1;
     }
 
-    // Find entry point
+    // Find entry point — a shared library (.so/.dll) has no entry, skip.
+    if (ls.is_shared == 0) {
     let is i32 as entry_name_len = reader.cstrlen(ls.entry_name);
     let is i32 as entry_idx = gsym_find(gsyms, ls.entry_name, entry_name_len);
     if (entry_idx < 0) {
@@ -696,6 +699,7 @@ fn build_symtab(ls as *LinkerState) as i32 {
     } else {
         ls.entry_vaddr = main_vaddr;
     }
+    }  // end if (ls.is_shared == 0)
 
     return errors;
 }
