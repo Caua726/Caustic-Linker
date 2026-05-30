@@ -459,7 +459,7 @@ fn cse_emit_csl_image(out as *reader.ByteBuffer, ls as *linker.LinkerState, flag
     let is i32 as gi with mut = 0;
     while (gi < gsyms.count) {
         let is *linker.GlobalSym as g = linker.gsym_get(gsyms, gi);
-        if (g.defined == 1 && g.name_len > 0 && g.section == 1) { ne = ne + 1; }
+        if (g.defined == 1 && g.name_len > 0 && g.section != 0) { ne = ne + 1; }
         gi = gi + 1;
     }
 
@@ -499,7 +499,7 @@ fn cse_emit_csl_image(out as *reader.ByteBuffer, ls as *linker.LinkerState, flag
     gi = 0;
     while (gi < gsyms.count) {
         let is *linker.GlobalSym as g = linker.gsym_get(gsyms, gi);
-        if (g.defined == 1 && g.name_len > 0 && g.section == 1) {
+        if (g.defined == 1 && g.name_len > 0 && g.section != 0) {
             reader.buf_emit32_le(out, estr_off + cur_str);
             reader.buf_emit64_le(out, g.vaddr);
             cur_str = cur_str + cast(i64, g.name_len) + 1;
@@ -510,7 +510,7 @@ fn cse_emit_csl_image(out as *reader.ByteBuffer, ls as *linker.LinkerState, flag
     gi = 0;
     while (gi < gsyms.count) {
         let is *linker.GlobalSym as g = linker.gsym_get(gsyms, gi);
-        if (g.defined == 1 && g.name_len > 0 && g.section == 1) {
+        if (g.defined == 1 && g.name_len > 0 && g.section != 0) {
             reader.buf_append(out, g.name, cast(i64, g.name_len));
             reader.buf_emit8(out, 0);
         }
