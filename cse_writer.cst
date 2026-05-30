@@ -37,6 +37,52 @@ use "elf_reader.cst" as reader;
 use "elf_writer.cst" as elfw;
 use "linker.cst" as linker;
 use "../src/codegen/target.cst" as tgt;
+use "../src/ir/opt_mem.cst" as om;
+
+// === .csl kernel32 imports (compat Windows path) =====================
+// The compat .csl's Windows io path calls kernel32 via `call [__imp_X]`. For
+// our loader (not the Windows loader) those slots must exist + be filled. We
+// place an __imp_ slot table just past the segments, register __imp_<sym> ->
+// slot so apply_relocations resolves the calls, and record a kernel32 import
+// table in the CSL_ image. On Windows the loader (a real PE) writes its own
+// kernel32 addresses (fn_ptr(os.windows.X)) into the slots — no PEB walk.
+
+// vaddr just past every real segment — base of the __imp_ slot table.
+fn _csl_imp_base(ls as *linker.LinkerState) as i64 {
+    let is i64 as e with mut = ls.text_vaddr + ls.text_size;
+    if (ls.rodata_vaddr + ls.rodata_size > e) { e = ls.rodata_vaddr + ls.rodata_size; }
+    if (ls.data_vaddr + ls.data_size > e) { e = ls.data_vaddr + ls.data_size; }
+    if (ls.bss_vaddr + ls.bss_total > e) { e = ls.bss_vaddr + ls.bss_total; }
+    return (e + 7) & (0 - 8);
+}
+
+// Register each __imp_<sym> as a global at its slot vaddr (mirror of the PE
+// register_imp_gsyms) so `call [rip+__imp_X]` relocations resolve to the slot.
+fn register_csl_imp_gsyms(ls as *linker.LinkerState, imp_base as i64) as void {
+    let is *i64 as lsp = cast(*i64, ls.cstimport_sym_ptrs);
+    let is *i32 as lsl = cast(*i32, ls.cstimport_sym_lens);
+    let is *linker.GlobalSymTab as gsyms = linker.get_gsyms(ls);
+    let is i32 as i with mut = 0;
+    while (i < ls.cstimport_count) {
+        let is i32 as sl = lsl[i];
+        let is *u8 as full = om.opt_alloc(cast(i64, sl) + 7);
+        full[0] = 95; full[1] = 95; full[2] = 105; full[3] = 109; full[4] = 112; full[5] = 95;  // "__imp_"
+        let is *u8 as sn = cast(*u8, lsp[i]);
+        let is i32 as k with mut = 0;
+        while (k < sl) { full[6 + k] = sn[k]; k = k + 1; }
+        full[6 + sl] = cast(u8, 0);
+        let is i32 as full_len = sl + 6;
+        let is i64 as vaddr = imp_base + cast(i64, i) * 8;
+        let is i32 as existing = linker.gsym_find(gsyms, full, full_len);
+        if (existing >= 0) {
+            let is *linker.GlobalSym as g = linker.gsym_get(gsyms, existing);
+            g.vaddr = vaddr; g.section = reader.SECIDX_DATA; g.defined = 1;
+        } else {
+            linker.gsym_add(gsyms, full, full_len, reader.SECIDX_DATA, vaddr, 0, 1);
+        }
+        i = i + 1;
+    }
+}
 
 let is i32 as CSE_VERSION with imut = 1;
 let is i32 as CSE_ARCH_X86_64 with imut = 1;
@@ -527,7 +573,7 @@ fn write_cse_combine_ape(pe_path as *u8, elf_path as *u8, cst_path as *u8,
 //   Packed segment bytes.
 //   Export table @export_off: export_count * 12 (name_off u32, vaddr u64),
 //     then a packed NUL-terminated string blob (name_off is an abs file offset).
-fn cse_emit_csl_image(out as *reader.ByteBuffer, ls as *linker.LinkerState, flags as i32) as void {
+fn cse_emit_csl_image(out as *reader.ByteBuffer, ls as *linker.LinkerState, flags as i32, imp_base as i64) as void {
     let is *reader.ByteBuffer as text_buf = linker.get_text(ls);
     let is *reader.ByteBuffer as rodata_buf = linker.get_rodata(ls);
     let is *reader.ByteBuffer as data_buf = linker.get_data(ls);
@@ -543,17 +589,20 @@ fn cse_emit_csl_image(out as *reader.ByteBuffer, ls as *linker.LinkerState, flag
     if (ls.rodata_size > 0) { sv[n] = ls.rodata_vaddr; sptr[n] = cast(i64, rodata_buf.data); sfsz[n] = ls.rodata_size; smsz[n] = ls.rodata_size; sperm[n] = 1; n = n + 1; }
     if (ls.data_size > 0) { sv[n] = ls.data_vaddr; sptr[n] = cast(i64, data_buf.data); sfsz[n] = ls.data_size; smsz[n] = ls.data_size; sperm[n] = 3; n = n + 1; }
     if (ls.bss_total > 0) { sv[n] = ls.bss_vaddr; sptr[n] = 0; sfsz[n] = 0; smsz[n] = ls.bss_total; sperm[n] = 3; n = n + 1; }
+    // __imp_ slot table: one zero-init i64 per kernel32 import (loader fills).
+    if (ls.cstimport_count > 0) { sv[n] = imp_base; sptr[n] = 0; sfsz[n] = 0; smsz[n] = cast(i64, ls.cstimport_count) * 8; sperm[n] = 3; n = n + 1; }
 
     let is i32 as ne with mut = 0;
+    let is i64 as estr_total with mut = 0;
     let is i32 as gi with mut = 0;
     while (gi < gsyms.count) {
         let is *linker.GlobalSym as g = linker.gsym_get(gsyms, gi);
-        if (g.defined == 1 && g.name_len > 0 && g.section != 0) { ne = ne + 1; }
+        if (g.defined == 1 && g.name_len > 0 && g.section != 0) { ne = ne + 1; estr_total = estr_total + cast(i64, g.name_len) + 1; }
         gi = gi + 1;
     }
 
     let is [40]i64 as sfoff;
-    let is i64 as cursor with mut = 32 + cast(i64, n) * 24;
+    let is i64 as cursor with mut = 44 + cast(i64, n) * 24;
     let is i32 as i with mut = 0;
     while (i < n) {
         if (sfsz[i] > 0) { sfoff[i] = cursor; cursor = cursor + sfsz[i]; } else { sfoff[i] = 0; }
@@ -561,15 +610,19 @@ fn cse_emit_csl_image(out as *reader.ByteBuffer, ls as *linker.LinkerState, flag
     }
     let is i64 as export_off = cursor;
     let is i64 as estr_off = export_off + cast(i64, ne) * 12;
+    let is i64 as kimport_off with mut = 0;
+    if (ls.cstimport_count > 0) { kimport_off = estr_off + estr_total; }
 
     reader.buf_emit8(out, 67); reader.buf_emit8(out, 83); reader.buf_emit8(out, 76); reader.buf_emit8(out, 95);  // "CSL_"
-    reader.buf_emit16_le(out, 1);
+    reader.buf_emit16_le(out, 2);                   // version 2 (+ kernel32 import table)
     reader.buf_emit8(out, CSE_ARCH_X86_64);
     reader.buf_emit8(out, flags);
     reader.buf_emit64_le(out, ls.base_addr);
     reader.buf_emit32_le(out, cast(i64, n));
     reader.buf_emit32_le(out, cast(i64, ne));
     reader.buf_emit64_le(out, export_off);
+    reader.buf_emit64_le(out, kimport_off);          // 0x20 kernel32 import table off (0 = none)
+    reader.buf_emit32_le(out, cast(i64, ls.cstimport_count));  // 0x28 kernel32 import count → header is 44 bytes
 
     i = 0;
     while (i < n) {
@@ -605,12 +658,32 @@ fn cse_emit_csl_image(out as *reader.ByteBuffer, ls as *linker.LinkerState, flag
         }
         gi = gi + 1;
     }
+    // kernel32 import table @kimport_off: N × { slot_vaddr u64, name (NUL-term) }.
+    // The loader resolves each name in its own kernel32 and writes the address
+    // into the slot at slot_vaddr, so the .csl's `call [__imp_X]` reaches it.
+    if (ls.cstimport_count > 0) {
+        let is *i64 as lsp = cast(*i64, ls.cstimport_sym_ptrs);
+        let is *i32 as lsl = cast(*i32, ls.cstimport_sym_lens);
+        let is i32 as ki with mut = 0;
+        while (ki < ls.cstimport_count) {
+            reader.buf_emit64_le(out, imp_base + cast(i64, ki) * 8);
+            reader.buf_append(out, cast(*u8, lsp[ki]), cast(i64, lsl[ki]));
+            reader.buf_emit8(out, 0);
+            ki = ki + 1;
+        }
+    }
 }
 
 fn write_csl(ls as *linker.LinkerState, output_path as *u8, flags as i32) as i32 {
+    // Gather kernel32 imports (compat Windows path) and give each an __imp_ slot
+    // just past the segments, so `call [__imp_X]` relocations resolve to a slot
+    // the loader fills. Must run BEFORE apply_relocations.
+    linker.collect_all_cstimports(ls);
+    let is i64 as imp_base = _csl_imp_base(ls);
+    register_csl_imp_gsyms(ls, imp_base);
     linker.apply_relocations(ls);
     let is reader.ByteBuffer as out = reader.buf_init(65536);
-    cse_emit_csl_image(&out, ls, flags);
+    cse_emit_csl_image(&out, ls, flags, imp_base);
     return cse_write_buf_to_file(&out, output_path);
 }
 
