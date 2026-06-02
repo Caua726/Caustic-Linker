@@ -279,7 +279,7 @@ fn cse_emit_cst_v2(out as *reader.ByteBuffer, ls as *linker.LinkerState) as void
     reader.buf_emit32_le(out, ver_off);            // 0x1C app_version file offset (0 = none)
     reader.buf_emit64_le(out, import_off);         // 0x20 import-table file offset (0 = none)
     reader.buf_emit32_le(out, cast(i64, imp_n));   // 0x28 import count
-    reader.buf_emit32_le(out, 0);                  // 0x2C reserved (header = 48 bytes)
+    reader.buf_emit32_le(out, cast(i64, tgt.cse_stack_size_get()));  // 0x2C declared user-stack bytes
 
     // Segment table.
     i = 0;
