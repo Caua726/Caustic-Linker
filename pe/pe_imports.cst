@@ -1,6 +1,6 @@
-use "elf_reader.cst" as reader;
-use "linker.cst" as linker;
-use "../src/ir/opt_mem.cst" as om;
+use "../readers/elf_reader.cst" as reader;
+use "../core/linker.cst" as linker;
+use "../../src/ir/opt_mem.cst" as om;
 
 // PE file alignment (0x200). Local copy — the only pe_writer constant the
 // import-layout code needs; everything else is passed in or computed.

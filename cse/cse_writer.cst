@@ -32,12 +32,12 @@
 //   0x18 8  bss_size          (u64 LE = ls.bss_total)
 // =======================================================
 
-use "../std/io.cst" as io;
-use "elf_reader.cst" as reader;
-use "elf_writer.cst" as elfw;
-use "linker.cst" as linker;
-use "../src/codegen/target.cst" as tgt;
-use "../src/ir/opt_mem.cst" as om;
+use "../../std/io.cst" as io;
+use "../readers/elf_reader.cst" as reader;
+use "../elf/elf_writer.cst" as elfw;
+use "../core/linker.cst" as linker;
+use "../../src/codegen/target.cst" as tgt;
+use "../../src/ir/opt_mem.cst" as om;
 
 // === .csl kernel32 imports (compat Windows path) =====================
 // The compat .csl's Windows io path calls kernel32 via `call [__imp_X]`. For

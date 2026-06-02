@@ -1,13 +1,13 @@
 use "../std/mem.cst" as mem;
 use "../std/io.cst" as io;
 use "../src/ir/opt_mem.cst" as om;
-use "elf_reader.cst" as reader;
-use "coff_reader.cst" as coff_reader;
-use "linker.cst" as linker;
-use "link_dynamic.cst" as ldyn;
-use "elf_writer.cst" as writer;
-use "pe_writer.cst" as pew;
-use "cse_writer.cst" as csew;
+use "readers/elf_reader.cst" as reader;
+use "readers/coff_reader.cst" as coff_reader;
+use "core/linker.cst" as linker;
+use "elf/link_dynamic.cst" as ldyn;
+use "elf/elf_writer.cst" as writer;
+use "pe/pe_writer.cst" as pew;
+use "cse/cse_writer.cst" as csew;
 use "../src/codegen/target.cst" as tgt;
 
 // ============================================================

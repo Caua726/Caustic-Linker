@@ -1,5 +1,5 @@
-use "../std/io.cst" as io;
-use "../src/ir/opt_mem.cst" as om;
+use "../../std/io.cst" as io;
+use "../../src/ir/opt_mem.cst" as om;
 use "elf_reader.cst" as reader;
 
 // ============================================================

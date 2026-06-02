@@ -1,6 +1,6 @@
-use "elf_reader.cst" as reader;
-use "linker.cst" as linker;
-use "../src/ir/opt_mem.cst" as om;
+use "../readers/elf_reader.cst" as reader;
+use "../core/linker.cst" as linker;
+use "../../src/ir/opt_mem.cst" as om;
 
 // Build the .reloc section. Iterates over every R_X86_64_64 relocation in
 // every input obj, computes the final RVA of the patched 8 bytes, then

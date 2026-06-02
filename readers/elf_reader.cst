@@ -1,6 +1,6 @@
-use "../std/mem.cst" as mem;
-use "../std/io.cst" as io;
-use "../src/ir/opt_mem.cst" as om;
+use "../../std/mem.cst" as mem;
+use "../../std/io.cst" as io;
+use "../../src/ir/opt_mem.cst" as om;
 
 // ============================================================
 // elf_reader.cst — Parse ELF64 relocatable object files (.o)

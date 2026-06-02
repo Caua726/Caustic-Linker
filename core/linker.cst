@@ -1,8 +1,8 @@
-use "../std/mem.cst" as mem;
-use "../std/io.cst" as io;
-use "../src/ir/opt_mem.cst" as om;
-use "../src/codegen/target.cst" as tgt;
-use "elf_reader.cst" as reader;
+use "../../std/mem.cst" as mem;
+use "../../std/io.cst" as io;
+use "../../src/ir/opt_mem.cst" as om;
+use "../../src/codegen/target.cst" as tgt;
+use "../readers/elf_reader.cst" as reader;
 
 // ============================================================
 // linker.cst — Core linking logic

@@ -1,6 +1,6 @@
-use "../std/io.cst" as io;
-use "../src/ir/opt_mem.cst" as om;
-use "elf_reader.cst" as reader;
+use "../../std/io.cst" as io;
+use "../../src/ir/opt_mem.cst" as om;
+use "../readers/elf_reader.cst" as reader;
 
 // ============================================================
 // pdb_writer.cst — Multi-Stream File (.pdb) writer

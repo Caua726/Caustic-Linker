@@ -2,10 +2,10 @@
 // Extracted from pe_writer.cst: builds the CodeView module symbol stream,
 // publics (GSI), TPI/IPI type streams, and patches IMAGE_DEBUG_DIRECTORY, from
 // the .cstdebug/.cstsigs/.cststructs/.cstlocals sections the compiler emits.
-use "elf_reader.cst" as reader;
-use "linker.cst" as linker;
-use "../src/ir/opt_mem.cst" as om;
-use "../src/debug_proto.cst" as dbgproto;
+use "../readers/elf_reader.cst" as reader;
+use "../core/linker.cst" as linker;
+use "../../src/ir/opt_mem.cst" as om;
+use "../../src/debug_proto.cst" as dbgproto;
 
 // CodeView debug directory + .pdb sidecar
 // ============================================================

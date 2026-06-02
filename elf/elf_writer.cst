@@ -1,9 +1,9 @@
-use "../std/mem.cst" as mem;
-use "../std/io.cst" as io;
-use "elf_reader.cst" as reader;
-use "linker.cst" as linker;
+use "../../std/mem.cst" as mem;
+use "../../std/io.cst" as io;
+use "../readers/elf_reader.cst" as reader;
+use "../core/linker.cst" as linker;
 use "link_dynamic.cst" as ldyn;
-use "../src/ir/opt_mem.cst" as om;
+use "../../src/ir/opt_mem.cst" as om;
 
 // ============================================================
 // elf_writer.cst — Write ELF64 executable
