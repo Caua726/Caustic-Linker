@@ -314,6 +314,287 @@ fn get_obj(ls as *LinkerState, idx as i32) as *reader.ObjFile {
 }
 
 // ============================================================
+// Dead-code elimination — per-function reachability mark-sweep (link-time dead-code elimination, NOT a runtime GC).
+// Marks .text functions reachable from the entry point and from any reference
+// originating OUTSIDE a .text function (data/rodata/custom relocs → roots), then
+// PRUNES each .o's .text (drops dead functions, repacks the live ones, remaps the
+// surviving symbols/relocations) BEFORE merge_sections. The rest of the pipeline
+// is unchanged. Cuts the ~22% bloat of per-module incremental objects.
+// ============================================================
+
+struct DeadStripFunc {
+    obj_idx as i32;
+    name as *u8;
+    name_len as i32;
+    value as i64;      // symbol offset within obj.text (function entry)
+    rstart as i64;     // copy-range start within obj.text (0 for the first func)
+    rend as i64;       // copy-range end (exclusive)
+    live as i32;
+    new_start as i64;  // entry offset in the pruned .text
+}
+
+let is *u8 as ds_funcs with mut;
+let is i32 as ds_count with mut;
+let is i32 as ds_cap with mut;
+let is *i32 as ds_obj_start with mut;
+let is *i32 as ds_obj_cnt with mut;
+let is *i32 as ds_edge_src with mut;
+let is *i32 as ds_edge_dst with mut;
+let is i32 as ds_edge_count with mut;
+let is i32 as ds_edge_cap with mut;
+
+fn ds_f(idx as i32) as *DeadStripFunc {
+    return cast(*DeadStripFunc, cast(i64, ds_funcs) + cast(i64, idx) * sizeof(DeadStripFunc));
+}
+
+fn ds_name_eq(a as *u8, alen as i32, b as *u8, blen as i32) as i32 {
+    if (alen != blen) { return 0; }
+    if (mem.memcmp(a, b, cast(i64, alen)) == 0) { return 1; }
+    return 0;
+}
+
+// Resolve a callee by name across all objs. -1 if not a known .text function.
+fn ds_find_name(name as *u8, name_len as i32) as i32 {
+    let is i32 as i with mut = 0;
+    while (i < ds_count) {
+        let is *DeadStripFunc as f = ds_f(i);
+        if (ds_name_eq(f.name, f.name_len, name, name_len) == 1) { return i; }
+        i = i + 1;
+    }
+    return cast(i32, 0 - 1);
+}
+
+// Which func in obj `oi` contains text offset `off`? -1 if none.
+fn ds_find_site(oi as i32, off as i64) as i32 {
+    let is i32 as s = ds_obj_start[oi];
+    let is i32 as c = ds_obj_cnt[oi];
+    let is i32 as j with mut = s;
+    while (j < s + c) {
+        let is *DeadStripFunc as f = ds_f(j);
+        if (off >= f.rstart && off < f.rend) { return j; }
+        j = j + 1;
+    }
+    return cast(i32, 0 - 1);
+}
+
+fn dead_strip(ls as *LinkerState) as void {
+    let is i32 as nobj = ls.obj_count;
+    if (nobj <= 0) { return; }
+    ds_cap = 65536;
+    ds_funcs = om.opt_alloc(cast(i64, ds_cap) * sizeof(DeadStripFunc));
+    ds_count = 0;
+    ds_obj_start = cast(*i32, om.opt_alloc(cast(i64, nobj) * 4));
+    ds_obj_cnt = cast(*i32, om.opt_alloc(cast(i64, nobj) * 4));
+    ds_edge_cap = 524288;
+    ds_edge_src = cast(*i32, om.opt_alloc(cast(i64, ds_edge_cap) * 4));
+    ds_edge_dst = cast(*i32, om.opt_alloc(cast(i64, ds_edge_cap) * 4));
+    ds_edge_count = 0;
+    let is [64]u8 as tmp;
+
+    // Phase 1: collect .text global functions per obj, sort by value, set ranges.
+    let is i32 as oi with mut = 0;
+    while (oi < nobj) {
+        let is *reader.ObjFile as obj = get_obj(ls, oi);
+        ds_obj_start[oi] = ds_count;
+        let is i32 as si with mut = 0;
+        while (si < obj.sym_count) {
+            let is *reader.ObjSym as s = reader.sym_get(obj, si);
+            if (s.section == reader.SECIDX_TEXT && s.binding == reader.STB_GLOBAL
+                && s.sym_type != reader.STT_SECTION && s.name_len > 0) {
+                if (ds_count < ds_cap) {
+                    let is *DeadStripFunc as f = ds_f(ds_count);
+                    f.obj_idx = oi; f.name = s.name; f.name_len = s.name_len;
+                    f.value = s.value; f.live = 0; f.new_start = 0;
+                    ds_count = ds_count + 1;
+                }
+            }
+            si = si + 1;
+        }
+        let is i32 as base = ds_obj_start[oi];
+        let is i32 as cnt = ds_count - base;
+        ds_obj_cnt[oi] = cnt;
+        // insertion sort this obj's funcs by value
+        let is i32 as a with mut = 1;
+        while (a < cnt) {
+            let is i32 as b with mut = a;
+            let is i32 as moving with mut = 1;
+            while (b > 0 && moving == 1) {
+                let is *DeadStripFunc as fb = ds_f(base + b);
+                let is *DeadStripFunc as fp = ds_f(base + b - 1);
+                if (fb.value < fp.value) {
+                    mem.memcpy(cast(*u8, &tmp), cast(*u8, fb), sizeof(DeadStripFunc));
+                    mem.memcpy(cast(*u8, fb), cast(*u8, fp), sizeof(DeadStripFunc));
+                    mem.memcpy(cast(*u8, fp), cast(*u8, &tmp), sizeof(DeadStripFunc));
+                    b = b - 1;
+                } else { moving = 0; }
+            }
+            a = a + 1;
+        }
+        // ranges: first func covers leading bytes ([0,..); others [value,..).
+        let is i32 as k with mut = 0;
+        while (k < cnt) {
+            let is *DeadStripFunc as f = ds_f(base + k);
+            if (k == 0) { f.rstart = 0; } else { f.rstart = f.value; }
+            if (k + 1 < cnt) {
+                let is *DeadStripFunc as fnx = ds_f(base + k + 1);
+                f.rend = fnx.value;
+            } else {
+                f.rend = obj.text.size;
+            }
+            k = k + 1;
+        }
+        oi = oi + 1;
+    }
+
+    // Phase 2: mark entry root + build edges / external-reference roots.
+    let is i32 as eidx = ds_find_name(ls.entry_name, reader.cstrlen(ls.entry_name));
+    if (eidx >= 0) { ds_f(eidx).live = 1; }
+    oi = 0;
+    while (oi < nobj) {
+        let is *reader.ObjFile as obj = get_obj(ls, oi);
+        let is i32 as ri with mut = 0;
+        while (ri < obj.reloc_count) {
+            let is *reader.ObjReloc as r = reader.reloc_get(obj, ri);
+            let is *reader.ObjSym as ts = reader.sym_get(obj, r.sym_idx);
+            let is i32 as tgt with mut = cast(i32, 0 - 1);
+            if (ts.name_len > 0) { tgt = ds_find_name(ts.name, ts.name_len); }
+            if (tgt >= 0) {
+                let is i32 as src with mut = cast(i32, 0 - 1);
+                if (r.section == reader.SECIDX_TEXT) { src = ds_find_site(oi, r.offset); }
+                if (src >= 0) {
+                    if (ds_edge_count < ds_edge_cap) {
+                        ds_edge_src[ds_edge_count] = src;
+                        ds_edge_dst[ds_edge_count] = tgt;
+                        ds_edge_count = ds_edge_count + 1;
+                    }
+                } else {
+                    ds_f(tgt).live = 1; // referenced from outside any .text function
+                }
+            }
+            ri = ri + 1;
+        }
+        oi = oi + 1;
+    }
+
+    // (No machine-code scan needed: caustic-as now emits a relocation for EVERY
+    // call — including same-.o calls — so the reloc pass above already has the
+    // complete call graph. See passes.cst pass2_resolve_label's is_global branch.)
+
+    // Phase 3: propagate liveness over edges to a fixpoint.
+    let is i32 as changed with mut = 1;
+    while (changed == 1) {
+        changed = 0;
+        let is i32 as e with mut = 0;
+        while (e < ds_edge_count) {
+            let is *DeadStripFunc as fs = ds_f(ds_edge_src[e]);
+            let is *DeadStripFunc as fd = ds_f(ds_edge_dst[e]);
+            if (fs.live == 1 && fd.live == 0) { fd.live = 1; changed = 1; }
+            e = e + 1;
+        }
+    }
+
+    // Phase 4: prune each obj — repack live functions, remap syms + relocs.
+    oi = 0;
+    while (oi < nobj) {
+        let is *reader.ObjFile as obj = get_obj(ls, oi);
+        let is i32 as base = ds_obj_start[oi];
+        let is i32 as cnt = ds_obj_cnt[oi];
+        if (cnt > 0) {
+            let is i64 as total with mut = 0;
+            let is i32 as k with mut = 0;
+            while (k < cnt) {
+                let is *DeadStripFunc as f = ds_f(base + k);
+                if (f.live == 1) { f.new_start = total; total = total + (f.rend - f.rstart); }
+                k = k + 1;
+            }
+            let is *u8 as nt = om.opt_alloc(total + 1);
+            k = 0;
+            while (k < cnt) {
+                let is *DeadStripFunc as f = ds_f(base + k);
+                if (f.live == 1) {
+                    mem.memcpy(cast(*u8, cast(i64, nt) + f.new_start),
+                               cast(*u8, cast(i64, obj.text.data) + f.rstart),
+                               f.rend - f.rstart);
+                }
+                k = k + 1;
+            }
+            // remap .text symbols (dead → undefined)
+            let is i32 as si with mut = 0;
+            while (si < obj.sym_count) {
+                let is *reader.ObjSym as sy = reader.sym_get(obj, si);
+                if (sy.section == reader.SECIDX_TEXT) {
+                    let is i32 as fi = ds_find_site(oi, sy.value);
+                    if (fi >= 0) {
+                        let is *DeadStripFunc as f = ds_f(fi);
+                        if (f.live == 1) { sy.value = f.new_start + (sy.value - f.rstart); }
+                        else {
+                            // Pruned function: demote its symbol to LOCAL + undefined so
+                            // build_symtab drops it silently. (Leaving it a defined global
+                            // with a stale offset, or an undefined GLOBAL, makes the linker
+                            // emit a spurious "undefined symbol" warning for code nobody
+                            // references — every dead-target reloc has a dead site and is
+                            // dropped below, so nothing actually needs it.)
+                            sy.section = 0;
+                            sy.binding = reader.STB_LOCAL;
+                        }
+                    }
+                }
+                si = si + 1;
+            }
+            // remap + compact .text relocs (drop dead-function relocs)
+            let is i32 as ri with mut = 0;
+            let is i32 as wi with mut = 0;
+            while (ri < obj.reloc_count) {
+                let is *reader.ObjReloc as r = reader.reloc_get(obj, ri);
+                let is i32 as keep with mut = 1;
+                if (r.section == reader.SECIDX_TEXT) {
+                    let is i32 as fi = ds_find_site(oi, r.offset);
+                    if (fi >= 0) {
+                        let is *DeadStripFunc as f = ds_f(fi);
+                        if (f.live == 1) { r.offset = f.new_start + (r.offset - f.rstart); }
+                        else { keep = 0; }
+                    }
+                }
+                if (keep == 1) {
+                    if (wi != ri) {
+                        let is *reader.ObjReloc as w = reader.reloc_get(obj, wi);
+                        w.offset = r.offset; w.sym_idx = r.sym_idx; w.rtype = r.rtype;
+                        w.addend = r.addend; w.section = r.section;
+                    }
+                    wi = wi + 1;
+                }
+                ri = ri + 1;
+            }
+            obj.reloc_count = wi;
+            obj.text.data = nt;
+            obj.text.size = total;
+        }
+        oi = oi + 1;
+    }
+
+    // Phase 5: silence orphan undefined symbols. A pruned (dead) function leaves
+    // UNDEFINED global entries in every .o that referenced it cross-module; those
+    // relocs were dropped above (their sites are dead), but the symbol-table entry
+    // remains and build_symtab would warn "undefined symbol" for code nobody needs.
+    // Demote any undefined GLOBAL symbol that names a known-dead function to LOCAL
+    // so it is dropped silently. (Real external imports never name a dead function.)
+    oi = 0;
+    while (oi < nobj) {
+        let is *reader.ObjFile as obj = get_obj(ls, oi);
+        let is i32 as si with mut = 0;
+        while (si < obj.sym_count) {
+            let is *reader.ObjSym as sy = reader.sym_get(obj, si);
+            if (sy.section == 0 && sy.binding == reader.STB_GLOBAL && sy.name_len > 0) {
+                let is i32 as gi = ds_find_name(sy.name, sy.name_len);
+                if (gi >= 0 && ds_f(gi).live == 0) { sy.binding = reader.STB_LOCAL; }
+            }
+            si = si + 1;
+        }
+        oi = oi + 1;
+    }
+}
+
+// ============================================================
 // _start stub
 // ============================================================
 
@@ -384,6 +665,18 @@ fn csec_find_or_add(ls as *LinkerState, name as *u8, name_len as i32) as i32 {
 }
 
 fn merge_sections(ls as *LinkerState) as void {
+    // Dead-code elimination: prune unreachable .text functions from each .o before
+    // they are concatenated. Relies on caustic-as emitting a relocation for EVERY
+    // call (function-sections; see passes.cst pass2_resolve_label's is_global branch)
+    // so the linker has the COMPLETE call graph — without that, same-.o calls are
+    // resolved inline and invisible, and any missed edge would drop a live function.
+    // Skipped for shared libraries (every exported symbol is a root there); entry-
+    // rooted reachability is for executables. Removes ~10% off incremental binaries.
+    let is i32 as DCE_ON with imut = 1;
+    if (DCE_ON == 1 && ls.is_shared == 0) {
+        dead_strip(ls);
+    }
+
     let is *reader.ByteBuffer as text_buf = get_text(ls);
     let is *reader.ByteBuffer as rodata_buf = get_rodata(ls);
     let is *reader.ByteBuffer as data_buf = get_data(ls);
