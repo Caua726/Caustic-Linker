@@ -272,7 +272,13 @@ fn cse_emit_cst_v2(out as *reader.ByteBuffer, ls as *linker.LinkerState) as void
     reader.buf_emit8(out, 84); reader.buf_emit8(out, 95);   // "CST_"
     reader.buf_emit16_le(out, 3);                  // version 3 (segmented + import table)
     reader.buf_emit8(out, CSE_ARCH_X86_64);
-    reader.buf_emit8(out, 0);                      // flags
+    // flags byte: bit0 = dynamic stack growth. The codegen emits prologue stack
+    // probes (+ __caustic_stkgrow) for recursive/indirect programs; this tells
+    // the loader to reserve the ceiling (0x2C) but commit only the initial
+    // window, letting the probes grow it via SYS_COMMIT. 0 = strict eager stack.
+    let is i32 as cse_flags with mut = 0;
+    if (tgt.cse_stack_dynamic_get() == 1) { cse_flags = cse_flags | 1; }
+    reader.buf_emit8(out, cast(i64, cse_flags));   // flags
     reader.buf_emit64_le(out, ls.entry_vaddr);     // entry_point
     reader.buf_emit64_le(out, ls.base_addr);       // base_addr
     reader.buf_emit32_le(out, cast(i64, n));       // seg_count
