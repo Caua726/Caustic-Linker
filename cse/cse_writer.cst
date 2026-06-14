@@ -36,6 +36,7 @@ use "../../std/io.cst" as io;
 use "../readers/elf_reader.cst" as reader;
 use "../elf/elf_writer.cst" as elfw;
 use "../core/linker.cst" as linker;
+use "../core/relocate.cst" as reloc;
 use "../../src/codegen/target.cst" as tgt;
 use "../../src/ir/opt_mem.cst" as om;
 
@@ -318,7 +319,7 @@ fn cse_emit_cst_v2(out as *reader.ByteBuffer, ls as *linker.LinkerState) as void
 fn write_cse_pure(ls as *linker.LinkerState, output_path as *u8) as i32 {
     // Resolve relocations against the assigned vaddrs (static; CausticOS
     // syscall ABI means no dynamic linking in the MVP).
-    linker.apply_relocations(ls);
+    reloc.apply_relocations(ls);
     let is reader.ByteBuffer as out = reader.buf_init(65536);
     cse_emit_cst_v2(&out, ls);
     return cse_write_buf_to_file(&out, output_path);
@@ -397,7 +398,7 @@ fn cse_build_cst_body(ls as *linker.LinkerState, out_body as *reader.ByteBuffer)
 
 // Shared implementation for compat + bundle.
 fn write_cse_selfextract(ls as *linker.LinkerState, output_path as *u8) as i32 {
-    linker.apply_relocations(ls);
+    reloc.apply_relocations(ls);
 
     // 1. Produce a standalone ELF body via the existing ELF writer, then read
     //    it back. The ELF is relocated at base 0x400000 (same as ls), so it is
@@ -687,7 +688,7 @@ fn write_csl(ls as *linker.LinkerState, output_path as *u8, flags as i32) as i32
     linker.collect_all_cstimports(ls);
     let is i64 as imp_base = _csl_imp_base(ls);
     register_csl_imp_gsyms(ls, imp_base);
-    linker.apply_relocations(ls);
+    reloc.apply_relocations(ls);
     let is reader.ByteBuffer as out = reader.buf_init(65536);
     cse_emit_csl_image(&out, ls, flags, imp_base);
     return cse_write_buf_to_file(&out, output_path);

@@ -2,6 +2,7 @@ use "../../std/mem.cst" as mem;
 use "../../std/io.cst" as io;
 use "../readers/elf_reader.cst" as reader;
 use "../core/linker.cst" as linker;
+use "../core/relocate.cst" as reloc;
 use "link_dynamic.cst" as ldyn;
 use "../../src/ir/opt_mem.cst" as om;
 
@@ -827,7 +828,7 @@ fn write_dynamic_executable(ls as *linker.LinkerState, output_path as *u8) as i3
     // Build PLT/GOT, data GOT, apply relocations, build metadata
     ldyn.build_plt_got(ls, lay.plt_vaddr, lay.got_vaddr);
     linker.build_data_got(ls, lay.data_got_vaddr);
-    linker.apply_relocations(ls);
+    reloc.apply_relocations(ls);
     ldyn.build_dynamic_metadata(ls, lay.plt_vaddr, lay.got_vaddr,
                                   lay.interp_vaddr, lay.dynsym_vaddr, lay.dynstr_vaddr,
                                   lay.hash_vaddr, lay.relaplt_vaddr, lay.dynamic_vaddr,

@@ -2,6 +2,7 @@ use "../../std/io.cst" as io;
 use "../../src/ir/opt_mem.cst" as om;
 use "../readers/elf_reader.cst" as reader;
 use "../core/linker.cst" as linker;
+use "../core/relocate.cst" as crel;
 use "pdb_writer.cst" as pdbw;
 use "../../src/debug_proto.cst" as dbgproto;
 use "pe_debug.cst" as pedbg;
@@ -635,7 +636,7 @@ fn write_pe_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     }
 
     // 6. Apply relocations — patches .text bytes with resolved addresses.
-    linker.apply_relocations(ls);
+    crel.apply_relocations(ls);
 
     // 7. Write DOS header (128 bytes)
     reader.buf_emit8(&out, 77); reader.buf_emit8(&out, 90);   // "MZ"

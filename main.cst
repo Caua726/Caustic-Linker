@@ -4,6 +4,8 @@ use "../src/ir/opt_mem.cst" as om;
 use "readers/elf_reader.cst" as reader;
 use "readers/coff_reader.cst" as coff_reader;
 use "core/linker.cst" as linker;
+use "core/map_writer.cst" as mapw;
+use "core/relocate.cst" as reloc;
 use "elf/link_dynamic.cst" as ldyn;
 use "elf/elf_writer.cst" as writer;
 use "pe/pe_writer.cst" as pew;
@@ -297,7 +299,7 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
     // __imp_<sym> gsyms are registered so PC32 reloc resolves to IAT).
     let is *tgt.Target as t = tgt.target_get();
     if (g_shared == 1 && t.object_format != 2 && t.object_format != 3) {
-        linker.apply_relocations(&ls);
+        reloc.apply_relocations(&ls);
         write_err = writer.write_shared_object(&ls, output_path);
     } else if (t.object_format == 3) {
         // CSE (Caustic Standard Executable). write_cse runs relocation and
@@ -311,7 +313,7 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
         ldyn.alloc_dynamic_bufs(&ls);
         write_err = writer.write_dynamic_executable(&ls, output_path);
     } else {
-        linker.apply_relocations(&ls);
+        reloc.apply_relocations(&ls);
         write_err = writer.write_executable(&ls, output_path);
     }
 
@@ -614,7 +616,7 @@ fn main(argc as i64, argv as i64) as i32 {
         // --shared (ELF): relocate (PC-relative → bias-independent) → ET_DYN .so.
         // For Windows (object_format==2), --shared falls through to the PE writer
         // below, which emits a .dll (export directory) when ls.is_shared==1.
-        linker.apply_relocations(&ls);
+        reloc.apply_relocations(&ls);
         write_err = writer.write_shared_object(&ls, output_path);
     } else if (t_main.object_format == 3) {
         // CSE (Caustic Standard Executable) — relocation + mode dispatch
@@ -643,7 +645,7 @@ fn main(argc as i64, argv as i64) as i32 {
     } else {
         // Static linking path (unchanged)
         // Phase 4: Apply relocations
-        linker.apply_relocations(&ls);
+        reloc.apply_relocations(&ls);
 
         // Phase 5: Write ELF executable
         write_err = writer.write_executable(&ls, output_path);
@@ -655,7 +657,7 @@ fn main(argc as i64, argv as i64) as i32 {
 
     // Phase 6: Map file
     if (do_map == 1) {
-        linker.write_map(&ls, output_path);
+        mapw.write_map(&ls, output_path);
     }
 
     if (verbose == 1) {
