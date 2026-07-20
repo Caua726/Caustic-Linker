@@ -3,6 +3,7 @@
 // symbol table, section accessors, and dynamic-symbol lookups).
 use "../readers/elf_reader.cst" as reader;
 use "linker.cst" as linker;
+use "../../src/codegen/target.cst" as tgt;
 
 fn resolve_reloc_sym(ls as *linker.LinkerState, obj as *reader.ObjFile, sym_idx as i32) as i64 {
     if (sym_idx < 0 || sym_idx >= obj.sym_count) {
@@ -111,8 +112,79 @@ fn apply_relocations(ls as *linker.LinkerState) as void {
             if (cast(i64, target_data) != 0) {
                 let is i64 as rtype = rel.rtype;
 
+                if (tgt.target_get().arch == tgt.ARCH_AARCH64) {
+                    let is i64 as old = cast(i64, target_data[buf_offset])
+                        + (cast(i64, target_data[buf_offset + 1]) << 8)
+                        + (cast(i64, target_data[buf_offset + 2]) << 16)
+                        + (cast(i64, target_data[buf_offset + 3]) << 24);
+                    let is i64 as word with mut = old;
+
+                    if (rtype == reader.R_AARCH64_ABS64) {
+                        let is i64 as value = S + A;
+                        target_data[buf_offset]     = cast(u8, value & 255);
+                        target_data[buf_offset + 1] = cast(u8, (value >> 8) & 255);
+                        target_data[buf_offset + 2] = cast(u8, (value >> 16) & 255);
+                        target_data[buf_offset + 3] = cast(u8, (value >> 24) & 255);
+                        target_data[buf_offset + 4] = cast(u8, (value >> 32) & 255);
+                        target_data[buf_offset + 5] = cast(u8, (value >> 40) & 255);
+                        target_data[buf_offset + 6] = cast(u8, (value >> 48) & 255);
+                        target_data[buf_offset + 7] = cast(u8, (value >> 56) & 255);
+                    }
+                    else if (rtype == reader.R_AARCH64_CALL26 || rtype == reader.R_AARCH64_JUMP26) {
+                        let is i64 as delta = S + A - P;
+                        let is i64 as imm = delta / 4;
+                        if (delta % 4 != 0 || imm < (0 - 33554432) || imm > 33554431) {
+                            reader.print_str("warning: AArch64 branch26 relocation overflow at ");
+                            reader.print_hex(P); reader.print_str("\n");
+                        }
+                        word = (old & 0xFC000000) | (imm & 0x03FFFFFF);
+                        target_data[buf_offset] = cast(u8, word & 255);
+                        target_data[buf_offset + 1] = cast(u8, (word >> 8) & 255);
+                        target_data[buf_offset + 2] = cast(u8, (word >> 16) & 255);
+                        target_data[buf_offset + 3] = cast(u8, (word >> 24) & 255);
+                    }
+                    else if (rtype == reader.R_AARCH64_CONDBR19) {
+                        let is i64 as delta = S + A - P;
+                        let is i64 as imm = delta / 4;
+                        if (delta % 4 != 0 || imm < (0 - 262144) || imm > 262143) {
+                            reader.print_str("warning: AArch64 condbr19 relocation overflow at ");
+                            reader.print_hex(P); reader.print_str("\n");
+                        }
+                        word = (old & 0xFF00001F) | ((imm & 0x7FFFF) << 5);
+                        target_data[buf_offset] = cast(u8, word & 255);
+                        target_data[buf_offset + 1] = cast(u8, (word >> 8) & 255);
+                        target_data[buf_offset + 2] = cast(u8, (word >> 16) & 255);
+                        target_data[buf_offset + 3] = cast(u8, (word >> 24) & 255);
+                    }
+                    else if (rtype == reader.R_AARCH64_ADR_PREL_PG_HI21) {
+                        let is i64 as page_delta = ((S + A) & (0 - 4096)) - (P & (0 - 4096));
+                        let is i64 as imm = page_delta / 4096;
+                        if (imm < (0 - 1048576) || imm > 1048575) {
+                            reader.print_str("warning: AArch64 ADRP relocation overflow at ");
+                            reader.print_hex(P); reader.print_str("\n");
+                        }
+                        word = (old & 0x9F00001F) | ((imm & 3) << 29) | (((imm >> 2) & 0x7FFFF) << 5);
+                        target_data[buf_offset] = cast(u8, word & 255);
+                        target_data[buf_offset + 1] = cast(u8, (word >> 8) & 255);
+                        target_data[buf_offset + 2] = cast(u8, (word >> 16) & 255);
+                        target_data[buf_offset + 3] = cast(u8, (word >> 24) & 255);
+                    }
+                    else if (rtype == reader.R_AARCH64_ADD_ABS_LO12_NC) {
+                        let is i64 as lo12 = (S + A) & 4095;
+                        word = (old & 0xFFC003FF) | (lo12 << 10);
+                        target_data[buf_offset] = cast(u8, word & 255);
+                        target_data[buf_offset + 1] = cast(u8, (word >> 8) & 255);
+                        target_data[buf_offset + 2] = cast(u8, (word >> 16) & 255);
+                        target_data[buf_offset + 3] = cast(u8, (word >> 24) & 255);
+                    }
+                    else {
+                        reader.print_str("warning: unhandled AArch64 relocation type ");
+                        reader.print_int(rtype); reader.print_str(" at ");
+                        reader.print_hex(P); reader.print_str("\n");
+                    }
+                }
                 // R_X86_64_64 (type 1): 64-bit absolute — S + A
-                if (rtype == reader.R_X86_64_64) {
+                else if (rtype == reader.R_X86_64_64) {
                     let is i64 as value = S + A;
                     target_data[buf_offset]     = cast(u8, value & 255);
                     target_data[buf_offset + 1] = cast(u8, (value >> 8) & 255);

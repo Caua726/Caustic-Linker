@@ -5,6 +5,7 @@ use "../core/linker.cst" as linker;
 use "../core/relocate.cst" as reloc;
 use "link_dynamic.cst" as ldyn;
 use "../../src/ir/opt_mem.cst" as om;
+use "../../src/codegen/target.cst" as tgt;
 
 // ============================================================
 // elf_writer.cst — Write ELF64 executable
@@ -47,7 +48,9 @@ fn write_elf_header(out as *reader.ByteBuffer, e_type as i32, entry as i64,
     reader.buf_emit8(out, 0);
     reader.buf_emit64_le(out, 0);
     reader.buf_emit16_le(out, e_type);
-    reader.buf_emit16_le(out, reader.EM_X86_64);
+    let is i32 as machine with mut = reader.EM_X86_64;
+    if (tgt.target_get().arch == tgt.ARCH_AARCH64) { machine = reader.EM_AARCH64; }
+    reader.buf_emit16_le(out, machine);
     reader.buf_emit32_le(out, 1);
     reader.buf_emit64_le(out, entry);
     reader.buf_emit64_le(out, phdr_off);

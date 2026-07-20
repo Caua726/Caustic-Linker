@@ -2,7 +2,8 @@
 
 A self-hosted static and dynamic linker for the Caustic toolchain, written entirely in Caustic.
 
-Takes `.o` ELF object files produced by `caustic-as` and outputs standalone Linux x86_64 executables — no GCC or GNU ld required.
+Takes `.o` ELF64 object files produced by `caustic-as` and outputs standalone
+Linux x86_64 or AArch64 executables — no GCC or GNU `ld` required.
 
 ## Build
 
@@ -19,6 +20,9 @@ make linker    # builds ./caustic-ld
 
 # Multi-object:
 ./caustic-ld main.cst.s.o lib.cst.s.o -o program
+
+# Static AArch64:
+./caustic-ld --target=linux-aarch64 main-aarch64.o lib-aarch64.o -o program-aarch64
 
 # Dynamic linking (libc):
 ./caustic-ld program.cst.s.o -lc -o program
@@ -38,8 +42,8 @@ make linker    # builds ./caustic-ld
 
 ## Features
 
-- **Static linking**: single and multi-object, resolves all relocations (R_X86_64_PC32, R_X86_64_PLT32)
-- **Dynamic linking**: `-lc`, `-lm`, etc. Generates PLT/GOT, .dynamic, .dynsym, .hash, .rela.plt, PT_INTERP
+- **Static linking**: x86_64 and AArch64, single and multi-object, with target-specific relocations
+- **Dynamic linking (x86_64)**: `-lc`, `-lm`, etc. Generates PLT/GOT, .dynamic, .dynsym, .hash, .rela.plt, PT_INTERP
 - **Eager binding**: all dynamic symbols resolved at startup (DT_BIND_NOW)
 - **_start stub**: auto-generated entry point that calls `main` and exits via syscall
 - **ELF output**: proper program headers, section layout, symbol table
@@ -89,7 +93,7 @@ Program headers (4): PT_LOAD R+X, PT_LOAD R+W, PT_INTERP, PT_DYNAMIC
 
 ## Limitations
 
-- x86_64 Linux only
-- No shared library output (only executables)
+- AArch64 currently supports static executables only; dynamic/shared output is
+  rejected explicitly
 - No debug info (DWARF) passthrough
 - No weak symbols or symbol versioning

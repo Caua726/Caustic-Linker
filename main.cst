@@ -228,6 +228,10 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
     // Initialize linker state. Windows PE uses 0x140000000 by default.
     let is i64 as init_base with mut = 4194304;  // 0x400000 (Linux ELF default)
     let is *tgt.Target as t_init = tgt.target_get();
+    if (t_init.arch == tgt.ARCH_AARCH64 && (g_shared == 1 || lib_count > 0)) {
+        print_str("caustic-ld: linux-aarch64 currently supports static linking only\n");
+        return 1;
+    }
     if (t_init.object_format == 2) { init_base = 5368709120; }  // 0x140000000
     if (g_base_addr != 0) { init_base = g_base_addr; }
     // --shared ELF (.so): base 0 (position-independent). Windows .dll keeps base.
@@ -497,6 +501,10 @@ fn main(argc as i64, argv as i64) as i32 {
     // unless --base= was explicitly set; output defaults to a.exe instead
     // of a.out when -o was not given.
     let is *tgt.Target as t_main_init = tgt.target_get();
+    if (t_main_init.arch == tgt.ARCH_AARCH64 && (shared_mode == 1 || needed_count > 0)) {
+        print_str("caustic-ld: linux-aarch64 currently supports static linking only\n");
+        return 1;
+    }
     if (t_main_init.object_format == 2 && base_addr == 4194304) {
         base_addr = 5368709120;  // 0x140000000
     }
