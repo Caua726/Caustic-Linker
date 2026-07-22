@@ -7,9 +7,11 @@ Linux x86_64 or AArch64 executables — no GCC or GNU `ld` required.
 
 ## Build
 
+Built by the Caustic toolchain itself — no `make`, `gcc`, or `ld`:
+
 ```bash
 # From the repo root:
-make linker    # builds ./caustic-ld
+./caustic-mk build caustic-ld    # builds ./caustic-ld
 ```
 
 ## Usage
