@@ -106,7 +106,7 @@ fn print_usage() as void {
     print_out("  -v                 Verbose output\n");
 }
 
-// Convert -l<name> to library soname by probing /usr/lib/lib<name>.so.<V>
+// Build "lib<name>.so" when ver < 0, otherwise "lib<name>.so.<ver>".
 fn build_soname(name as *u8, name_len as i64, ver as i64) as *u8 {
     let is *u8 as soname = om.opt_alloc(name_len + 9);
     soname[0] = 108; // 'l'
@@ -120,45 +120,97 @@ fn build_soname(name as *u8, name_len as i64, ver as i64) as *u8 {
     soname[3 + name_len] = 46;  // '.'
     soname[4 + name_len] = 115; // 's'
     soname[5 + name_len] = 111; // 'o'
+    if (ver < 0) {
+        soname[6 + name_len] = 0;
+        return soname;
+    }
     soname[6 + name_len] = 46;  // '.'
     soname[7 + name_len] = cast(u8, 48 + ver); // '0' + ver
     soname[8 + name_len] = 0;
     return soname;
 }
 
+// Directories the dynamic loader searches by default. Probing only /usr/lib
+// resolved -l<name> on Arch and nowhere else: Debian and Ubuntu keep their
+// libraries under /lib/x86_64-linux-gnu, 64-bit RPM distros under /usr/lib64.
+let is i32 as LIBDIR_COUNT with imut = 6;
+fn libdir_at(i as i32) as *u8 {
+    if (i == 0) { return "/usr/lib/"; }
+    if (i == 1) { return "/usr/lib64/"; }
+    if (i == 2) { return "/lib/x86_64-linux-gnu/"; }
+    if (i == 3) { return "/usr/lib/x86_64-linux-gnu/"; }
+    if (i == 4) { return "/usr/local/lib/"; }
+    return "/lib/";
+}
+
+// 1 when <dir><soname> can be opened for reading.
+fn lib_exists(dir as *u8, soname as *u8) as i32 {
+    let is i64 as dl = strlen(dir);
+    let is i64 as sl = strlen(soname);
+    let is *u8 as path = om.opt_alloc(dl + sl + 1);
+    let is i64 as i with mut = 0;
+    while (i < dl) { path[i] = dir[i]; i = i + 1; }
+    i = 0;
+    while (i < sl) { path[dl + i] = soname[i]; i = i + 1; }
+    path[dl + sl] = 0;
+    let is i64 as fd = io._open_read(path);
+    om.opt_free(path);
+    if (fd < 0) { return 0; }
+    io._close_fd(fd);
+    return 1;
+}
+
+// 1 when the name already contains ".so" — i.e. it is a soname, not an -l stem.
+fn name_is_soname(name as *u8, name_len as i64) as i32 {
+    let is i64 as i with mut = 0;
+    while (i + 2 < name_len) {
+        if (name[i] == 46 && name[i+1] == 115 && name[i+2] == 111) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Turn a -l<name> stem into the soname that goes into DT_NEEDED.
 fn lib_to_soname(name as *u8) as *u8 {
     let is i64 as name_len = strlen(name);
 
-    // Probe /usr/lib/lib<name>.so.<V> for V = 0..9
-    // "/usr/lib/lib" = 12 chars, ".so." = 4, digit = 1, null = 1
-    let is *u8 as path = om.opt_alloc(12 + name_len + 6);
-    path[0] = 47; path[1] = 117; path[2] = 115; path[3] = 114;   // "/usr"
-    path[4] = 47; path[5] = 108; path[6] = 105; path[7] = 98;    // "/lib"
-    path[8] = 47; path[9] = 108; path[10] = 105; path[11] = 98;  // "/lib"
-    let is i64 as j with mut = 0;
-    while (j < name_len) {
-        path[12 + j] = name[j];
-        j = j + 1;
+    // Already a soname ("libm.so.6", "libfoo.so")? Pass it through untouched
+    // rather than wrapping it into "liblibm.so.6.so".
+    if (name_is_soname(name, name_len) == 1) {
+        let is *u8 as verbatim = om.opt_alloc(name_len + 1);
+        let is i64 as c with mut = 0;
+        while (c < name_len) { verbatim[c] = name[c]; c = c + 1; }
+        verbatim[name_len] = 0;
+        return verbatim;
     }
-    let is i64 as p = 12 + name_len;
-    path[p] = 46; path[p+1] = 115; path[p+2] = 111; path[p+3] = 46; // ".so."
 
+    // Versioned first — a library that ships lib<name>.so.<V> names that file
+    // in its own SONAME, and the unversioned link is only a build-time symlink.
     let is i64 as v with mut = 0;
     while (v < 10) {
-        path[p + 4] = cast(u8, 48 + v);
-        path[p + 5] = 0;
-        let is i64 as fd = io._open_read(path);
-        if (fd >= 0) {
-            io._close_fd(fd);
-            om.opt_free(path);
-            return build_soname(name, name_len, v);
+        let is *u8 as cand = build_soname(name, name_len, v);
+        let is i32 as d with mut = 0;
+        while (d < LIBDIR_COUNT) {
+            if (lib_exists(libdir_at(d), cand) == 1) { return cand; }
+            d = d + 1;
         }
+        om.opt_free(cand);
         v = v + 1;
     }
 
-    om.opt_free(path);
-    // Fallback: lib<name>.so.6
-    return build_soname(name, name_len, 6);
+    let is *u8 as plain = build_soname(name, name_len, 0 - 1);
+    let is i32 as d2 with mut = 0;
+    while (d2 < LIBDIR_COUNT) {
+        if (lib_exists(libdir_at(d2), plain) == 1) { return plain; }
+        d2 = d2 + 1;
+    }
+
+    // Nothing on this machine matches. Emit the unversioned name instead of
+    // inventing a version: the old ".so.6" fallback (a libc-ism) named a file
+    // that existed nowhere, so the link reported success and the program died
+    // at startup with "cannot open shared object file". That is what broke
+    // -lcaustic, whose libcaustic.so is installed outside the loader's path.
+    return plain;
 }
 
 // ============================================================
