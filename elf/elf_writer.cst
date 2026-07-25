@@ -245,7 +245,24 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
 
     let is i64 as phdr_off = ELF_HDR_SIZE;
     let is i64 as text_file_off = PAGE_SIZE;
-    let is i64 as rx_file_size = ls.text_size;
+    // Executable custom sections live inside the R+X segment, right after
+    // .text, matching the vaddrs assign_addresses handed them. Their file
+    // offsets follow the same 8-byte stepping so file_off - text_file_off
+    // tracks vaddr - text_vaddr.
+    let is [32]i64 as xcsec_foffs;
+    let is *i32 as x_execs = cast(*i32, ls.csec_execs);
+    let is *i64 as x_sizes = cast(*i64, ls.csec_sizes);
+    let is i64 as rx_file_size with mut = ls.text_size;
+    let is i32 as xi with mut = 0;
+    while (xi < ls.csec_count) {
+        xcsec_foffs[xi] = 0;
+        if (x_execs[xi] == 1 && x_sizes[xi] > 0) {
+            rx_file_size = (rx_file_size + 7) & (0 - 8);
+            xcsec_foffs[xi] = text_file_off + rx_file_size;
+            rx_file_size = rx_file_size + x_sizes[xi];
+        }
+        xi = xi + 1;
+    }
 
     // .rodata + .data in R+W segment
     let is i64 as rw_file_off with mut = text_file_off + rx_file_size;
@@ -284,9 +301,13 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     let is i32 as csi with mut = 0;
     let is i64 as csec_end_off with mut = data_file_off + ls.data_size;
     while (csi < ls.csec_count) {
-        csec_end_off = (csec_end_off + 7) & (0 - 8);
-        csec_foffs[csi] = csec_end_off;
-        csec_end_off = csec_end_off + csec_sizes[csi];
+        if (x_execs[csi] == 1 && csec_sizes[csi] > 0) {
+            csec_foffs[csi] = xcsec_foffs[csi];   // already placed in the R+X region
+        } else {
+            csec_end_off = (csec_end_off + 7) & (0 - 8);
+            csec_foffs[csi] = csec_end_off;
+            csec_end_off = csec_end_off + csec_sizes[csi];
+        }
         csi = csi + 1;
     }
 
@@ -300,6 +321,20 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     // Pad + sections
     reader.buf_pad_to(&out, text_file_off);
     reader.buf_append(&out, text_buf.data, ls.text_size);
+
+    // Executable custom sections belong to the R+X segment and sit before
+    // .rodata in the file, so they must be written here — buf_pad_to only moves
+    // forward, and emitting them with the data ones below would silently skip
+    // their bytes and leave calls into them landing on zeros.
+    let is *reader.ByteBuffer as x_mbufs = cast(*reader.ByteBuffer, ls.csec_bufs);
+    let is i32 as xci with mut = 0;
+    while (xci < ls.csec_count) {
+        if (x_execs[xci] == 1 && csec_sizes[xci] > 0) {
+            reader.buf_pad_to(&out, csec_foffs[xci]);
+            reader.buf_append(&out, x_mbufs[xci].data, csec_sizes[xci]);
+        }
+        xci = xci + 1;
+    }
 
     // R+W segment: .rodata + .data
     reader.buf_pad_to(&out, rodata_file_off);
@@ -315,7 +350,7 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     let is *reader.ByteBuffer as csec_mbufs = cast(*reader.ByteBuffer, ls.csec_bufs);
     csi = 0;
     while (csi < ls.csec_count) {
-        if (csec_sizes[csi] > 0) {
+        if (csec_sizes[csi] > 0 && x_execs[csi] == 0) {   // exec ones written above
             reader.buf_pad_to(&out, csec_foffs[csi]);
             reader.buf_append(&out, csec_mbufs[csi].data, csec_sizes[csi]);
         }

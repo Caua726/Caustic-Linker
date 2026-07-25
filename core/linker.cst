@@ -114,6 +114,7 @@ struct LinkerState {
     csec_name_lens as *u8; // array of i32
     csec_sizes as *u8;     // array of i64
     csec_vaddrs as *u8;    // array of i64
+    csec_execs as *u8;     // array of i32 — 1 = section holds code (SHF_EXECINSTR)
     csec_count as i32;
 
     // Dynamic linking
@@ -213,6 +214,7 @@ fn linker_init(base_addr as i64) as LinkerState {
     ls.csec_name_lens = om.opt_alloc(32 * 4);
     ls.csec_sizes = om.opt_alloc(32 * 8);
     ls.csec_vaddrs = om.opt_alloc(32 * 8);
+    ls.csec_execs = om.opt_alloc(32 * 4);
     ls.csec_count = 0;
     ls.cstimport_dll_ptrs = om.opt_alloc(1024 * 8);
     ls.cstimport_dll_lens = om.opt_alloc(1024 * 4);
@@ -249,7 +251,13 @@ fn bytes_eq(a as *u8, a_len as i32, b as *u8, b_len as i32) as i32 {
 //   u32 count
 //   for each: u32 dll_len, u32 sym_len, bytes[dll_len], bytes[sym_len]
 fn add_cstimport(ls as *LinkerState, dll as *u8, dll_len as i32, sym as *u8, sym_len as i32) as void {
-    if (ls.cstimport_count >= 1024) { return; }
+    // The table is a fixed 1024 slots (allocated in linker_init). Silently
+    // dropping past the ceiling produced a binary missing imports it needed,
+    // with no diagnostic anywhere — fail loudly instead.
+    if (ls.cstimport_count >= 1024) {
+        reader.print_str("caustic-ld: more than 1024 distinct extern imports; raise the cstimport table\n");
+        io.exit(1);
+    }
     let is *i64 as dp = cast(*i64, ls.cstimport_dll_ptrs);
     let is *i32 as dl = cast(*i32, ls.cstimport_dll_lens);
     let is *i64 as sp = cast(*i64, ls.cstimport_sym_ptrs);
@@ -729,6 +737,8 @@ fn csec_find_or_add(ls as *LinkerState, name as *u8, name_len as i32) as i32 {
     bufs[idx] = reader.buf_init(4096);
     let is *i64 as sizes = cast(*i64, ls.csec_sizes);
     sizes[idx] = 0;
+    let is *i32 as xs = cast(*i32, ls.csec_execs);
+    xs[idx] = 0;
     ls.csec_count = ls.csec_count + 1;
     return idx;
 }
@@ -793,6 +803,13 @@ fn merge_sections(ls as *LinkerState) as void {
             if (cs.size > 0) {
                 reader.buf_append(&mbufs[midx], cs.data, cs.size);
             }
+            // Any contributing object marking the section executable makes the
+            // merged section executable — it holds code from `with section(...)`.
+            let is *i32 as oxp = cast(*i32, cast(i64, obj.csec_execs) + cast(i64, ci) * 4);
+            if (*oxp == 1) {
+                let is *i32 as mxp = cast(*i32, ls.csec_execs);
+                mxp[midx] = 1;
+            }
             ci = ci + 1;
         }
 
@@ -829,7 +846,24 @@ fn assign_addresses(ls as *LinkerState) as void {
     if (t_aa.object_format == 3) { cse = 1; }
 
     // .rodata: always page-aligned after .text.
-    let is i64 as rx_end = ls.text_vaddr + ls.text_size;
+    // Executable custom sections (a function carrying `with section(...)`) go
+    // immediately after .text so they fall inside the R+X segment. Data ones
+    // keep their old slot between .data and .bss — putting code there mapped it
+    // non-executable and every call into it faulted.
+    let is i64 as rx_end with mut = ls.text_vaddr + ls.text_size;
+    let is *i32 as x_execs = cast(*i32, ls.csec_execs);
+    let is *i64 as x_vaddrs = cast(*i64, ls.csec_vaddrs);
+    let is *i64 as x_sizes = cast(*i64, ls.csec_sizes);
+    let is i32 as xi with mut = 0;
+    while (xi < ls.csec_count) {
+        if (x_execs[xi] == 1 && x_sizes[xi] > 0) {
+            if (cse == 1) { rx_end = (rx_end + 4095) & (0 - 4096); }
+            else { rx_end = (rx_end + 7) & (0 - 8); }
+            x_vaddrs[xi] = rx_end;
+            rx_end = rx_end + x_sizes[xi];
+        }
+        xi = xi + 1;
+    }
     let is i64 as rw_start with mut = rx_end;
     if (rx_end % 4096 != 0) {
         rw_start = rx_end + 4096 - (rx_end % 4096);
@@ -845,11 +879,15 @@ fn assign_addresses(ls as *LinkerState) as void {
     let is *i64 as csizes = cast(*i64, ls.csec_sizes);
     let is i32 as ci with mut = 0;
     while (ci < ls.csec_count) {
-        if (cse == 1) { csec_addr = (csec_addr + 4095) & (0 - 4096); }
-        else { csec_addr = (csec_addr + 7) & (0 - 8); }
-        cvaddrs[ci] = csec_addr;
-        csec_addr = csec_addr + csizes[ci];
-        ci = ci + 1;
+        // Executable ones already got an address up in the R+X region.
+        if (x_execs[ci] == 1 && csizes[ci] > 0) { ci = ci + 1; }
+        else {
+            if (cse == 1) { csec_addr = (csec_addr + 4095) & (0 - 4096); }
+            else { csec_addr = (csec_addr + 7) & (0 - 8); }
+            cvaddrs[ci] = csec_addr;
+            csec_addr = csec_addr + csizes[ci];
+            ci = ci + 1;
+        }
     }
     if (cse == 1) { csec_addr = (csec_addr + 4095) & (0 - 4096); }
     ls.bss_vaddr = csec_addr;

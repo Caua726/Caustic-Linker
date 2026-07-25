@@ -285,6 +285,7 @@ struct ObjFile {
     csec_names as *u8;      // array of *u8 (name pointers)
     csec_name_lens as *u8;  // array of i32
     csec_indices as *u8;    // array of i32 (original ELF sh_index)
+    csec_execs as *u8;      // array of i32 — 1 when sh_flags has SHF_EXECINSTR
     csec_count as i32;
 
     // Offsets assigned during linking (set by linker)
@@ -469,6 +470,7 @@ fn parse_section_headers(data as *u8, obj as *ObjFile, sr as *ScanResult,
     obj.csec_names = om.opt_alloc(32 * 8);
     obj.csec_name_lens = om.opt_alloc(32 * 4);
     obj.csec_indices = om.opt_alloc(32 * 4);
+    obj.csec_execs = om.opt_alloc(32 * 4);
     obj.csec_offsets = om.opt_alloc(32 * 8);
 
     sr.symtab_off = 0;
@@ -526,6 +528,11 @@ fn parse_section_headers(data as *u8, obj as *ObjFile, sr as *ScanResult,
                     *nlp = cstrlen(name);
                     let is *i32 as idxp = cast(*i32, cast(i64, obj.csec_indices) + cast(i64, ci) * 4);
                     *idxp = cast(i32, si);
+                    // SHF_EXECINSTR (bit 2) — the section carries code, so the
+                    // layout must place it in the executable segment.
+                    let is i64 as sh_flags = read_u64(data, sh + 8);
+                    let is *i32 as xp = cast(*i32, cast(i64, obj.csec_execs) + cast(i64, ci) * 4);
+                    if ((sh_flags & 4) != 0) { *xp = 1; } else { *xp = 0; }
                     obj.csec_count = obj.csec_count + 1;
                 }
             }
