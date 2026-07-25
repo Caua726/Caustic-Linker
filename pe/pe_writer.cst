@@ -306,9 +306,17 @@ fn write_pe_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     // STUB_SIZE to compute the final RVA of each text-section relocation,
     // and the SEH builder later derives the internal helpers' begin/end
     // RVAs from the same constants.
-    let is i64 as ENTRY_STUB_SIZE = 47;
-    let is i64 as CHKSTK_SIZE     = 57;
-    let is i64 as PARSE_ARGV_SIZE = 228;
+    // AArch64 has no __caustic_chkstk: the stack probe it implements is an
+    // x86 concern and the backend never calls it, so its slot is zero-sized.
+    let is i32 as is_a64 = tgt.target_get().arch;
+    let is i64 as ENTRY_STUB_SIZE with mut = 47;
+    let is i64 as CHKSTK_SIZE     with mut = 57;
+    let is i64 as PARSE_ARGV_SIZE with mut = 228;
+    if (is_a64 == tgt.ARCH_AARCH64) {
+        ENTRY_STUB_SIZE = entry.A64_ENTRY_STUB_SIZE;
+        CHKSTK_SIZE     = 0;
+        PARSE_ARGV_SIZE = entry.A64_PARSE_ARGV_SIZE;
+    }
     let is i64 as STUB_SIZE       = ENTRY_STUB_SIZE + CHKSTK_SIZE + PARSE_ARGV_SIZE;
 
     // Compute headers footprint: PE+COFF (128+4+20) + OptHdr (240) + sections.
@@ -553,20 +561,28 @@ fn write_pe_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     let is i64 as pa_begin   = cks_end;
     let is i64 as pa_end     = pa_begin + PARSE_ARGV_SIZE;
 
-    let is i64 as stub_xoff = entry.emit_entry_stub_unwind(&xdata_buf);
-    reader.buf_emit32_le(&pdata_buf, stub_begin);
-    reader.buf_emit32_le(&pdata_buf, stub_end);
-    reader.buf_emit32_le(&pdata_buf, xdata_rva + stub_xoff);
+    if (is_a64 == tgt.ARCH_AARCH64) {
+        // 8-byte entries; no __caustic_chkstk on this architecture.
+        reader.buf_emit32_le(&pdata_buf, stub_begin);
+        reader.buf_emit32_le(&pdata_buf, entry.a64_packed_unwind(stub_end - stub_begin));
+        reader.buf_emit32_le(&pdata_buf, pa_begin);
+        reader.buf_emit32_le(&pdata_buf, entry.a64_packed_unwind(pa_end - pa_begin));
+    } else {
+        let is i64 as stub_xoff = entry.emit_entry_stub_unwind(&xdata_buf);
+        reader.buf_emit32_le(&pdata_buf, stub_begin);
+        reader.buf_emit32_le(&pdata_buf, stub_end);
+        reader.buf_emit32_le(&pdata_buf, xdata_rva + stub_xoff);
 
-    let is i64 as cks_xoff = entry.emit_chkstk_unwind(&xdata_buf);
-    reader.buf_emit32_le(&pdata_buf, cks_begin);
-    reader.buf_emit32_le(&pdata_buf, cks_end);
-    reader.buf_emit32_le(&pdata_buf, xdata_rva + cks_xoff);
+        let is i64 as cks_xoff = entry.emit_chkstk_unwind(&xdata_buf);
+        reader.buf_emit32_le(&pdata_buf, cks_begin);
+        reader.buf_emit32_le(&pdata_buf, cks_end);
+        reader.buf_emit32_le(&pdata_buf, xdata_rva + cks_xoff);
 
-    let is i64 as pa_xoff = entry.emit_parse_argv_unwind(&xdata_buf);
-    reader.buf_emit32_le(&pdata_buf, pa_begin);
-    reader.buf_emit32_le(&pdata_buf, pa_end);
-    reader.buf_emit32_le(&pdata_buf, xdata_rva + pa_xoff);
+        let is i64 as pa_xoff = entry.emit_parse_argv_unwind(&xdata_buf);
+        reader.buf_emit32_le(&pdata_buf, pa_begin);
+        reader.buf_emit32_le(&pdata_buf, pa_end);
+        reader.buf_emit32_le(&pdata_buf, xdata_rva + pa_xoff);
+    }
 
     // User functions: enumerate gsyms with section=TEXT && defined=1 EXCEPT
     // __caustic_chkstk (already covered above). Sort by vaddr ascending so
@@ -612,6 +628,14 @@ fn write_pe_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
             end = linker.gsym_get(gsyms2, user_idxs[fi + 1]).vaddr - ls.base_addr;
         }
         // Decode at text_buf offset = vaddr - ls.text_vaddr.
+        if (is_a64 == tgt.ARCH_AARCH64) {
+            reader.buf_emit32_le(&pdata_buf, begin);
+            let is i64 as pk with mut = entry.a64_packed_unwind(end - begin);
+            if (pk == 0) { pk = xdata_rva + entry.a64_emit_xdata(&xdata_buf, end - begin); }
+            reader.buf_emit32_le(&pdata_buf, pk);
+            fi = fi + 1;
+            continue;
+        }
         let is i64 as tb_off = gf.vaddr - ls.text_vaddr;
         let is i32 as max_bytes = cast(i32, end - begin);
         let is i32 as prolog_size with mut = 0;
@@ -883,14 +907,21 @@ fn write_pe_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
         return 1;
     }
     let is i64 as parse_argv_rva = TEXT_RVA + ENTRY_STUB_SIZE + CHKSTK_SIZE;
-    entry.emit_win_entry_stub(&out, main_vaddr - ls.base_addr,
-                        getcmdline_iat_rva, parse_argv_rva,
-                        exit_iat_rva, TEXT_RVA);
-    // __caustic_chkstk at TEXT_RVA + ENTRY_STUB_SIZE — registered as a gsym
-    // below so codegen-emitted `call __caustic_chkstk` resolves via PC32.
-    entry.emit_caustic_chkstk(&out);
-    // __caustic_parse_argv at TEXT_RVA + ENTRY_STUB_SIZE + CHKSTK_SIZE.
-    entry.emit_caustic_parse_argv(&out);
+    if (is_a64 == tgt.ARCH_AARCH64) {
+        entry.emit_a64_entry_stub(&out, main_vaddr - ls.base_addr,
+                            getcmdline_iat_rva, parse_argv_rva,
+                            exit_iat_rva, TEXT_RVA);
+        entry.emit_a64_parse_argv(&out);
+    } else {
+        entry.emit_win_entry_stub(&out, main_vaddr - ls.base_addr,
+                            getcmdline_iat_rva, parse_argv_rva,
+                            exit_iat_rva, TEXT_RVA);
+        // __caustic_chkstk at TEXT_RVA + ENTRY_STUB_SIZE — registered as a gsym
+        // below so codegen-emitted `call __caustic_chkstk` resolves via PC32.
+        entry.emit_caustic_chkstk(&out);
+        // __caustic_parse_argv at TEXT_RVA + ENTRY_STUB_SIZE + CHKSTK_SIZE.
+        entry.emit_caustic_parse_argv(&out);
+    }
     let is i64 as tb_len = text_buf.len;
     let is i64 as ti with mut = 0;
     while (ti < tb_len) {
