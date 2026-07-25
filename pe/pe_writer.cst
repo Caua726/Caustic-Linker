@@ -10,6 +10,7 @@ use "pe_imports.cst" as imp;
 use "pe_entry.cst" as entry;
 use "pe_reloc.cst" as reloc;
 use "pe_exports.cst" as exports;
+use "../../src/codegen/target.cst" as tgt;
 
 // ============================================================
 // pe_writer.cst — PE32+ executable writer (Windows x86_64)
@@ -27,6 +28,14 @@ use "pe_exports.cst" as exports;
 
 // === PE/COFF constants ===
 let is i32 as IMAGE_FILE_MACHINE_AMD64 with imut = 34404;   // 0x8664
+let is i32 as IMAGE_FILE_MACHINE_ARM64 with imut = 43620;   // 0xAA64
+
+// COFF Machine for the target being linked. Emitting AMD64 unconditionally
+// produced a PE that claimed x86-64 while carrying AArch64 code.
+fn pe_machine() as i32 {
+    if (tgt.target_get().arch == tgt.ARCH_AARCH64) { return IMAGE_FILE_MACHINE_ARM64; }
+    return IMAGE_FILE_MACHINE_AMD64;
+}
 let is i32 as IMAGE_FILE_EXECUTABLE_IMAGE with imut = 2;
 let is i32 as IMAGE_FILE_LARGE_ADDRESS_AWARE with imut = 32;  // 0x20
 let is i32 as PE_OPT_MAGIC_PE32PLUS with imut = 523;        // 0x20B
@@ -110,7 +119,7 @@ fn write_minimal_exit42(fd as i64) as i32 {
     reader.buf_emit8(&out, 0);
 
     // --- COFF file header (20 bytes) ---
-    reader.buf_emit16_le(&out, IMAGE_FILE_MACHINE_AMD64);  // Machine
+    reader.buf_emit16_le(&out, cast(i64, pe_machine()));    // Machine
     reader.buf_emit16_le(&out, 2);                          // NumberOfSections = .text + .idata
     reader.buf_emit32_le(&out, 0);                          // TimeDateStamp
     reader.buf_emit32_le(&out, 0);                          // PointerToSymbolTable (stripped)
