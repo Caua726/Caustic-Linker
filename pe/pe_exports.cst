@@ -9,8 +9,25 @@ use "../../src/ir/opt_mem.cst" as om;
 // debug directory; DataDirectory[0] points at it. Lets a DLL export its
 // defined functions so another PE can import them (GetProcAddress).
 // ====================================================================
-let is *u8 as PE_DLL_NAME with imut = "caustic.dll";
-let is i64 as PE_DLL_NAME_LEN with imut = 11;
+// The export directory names the library itself. It was a fixed
+// "caustic.dll" regardless of what the file was actually called, so a
+// libcaustic.dll described itself as something else — harmless for a loader
+// that resolves by filename, wrong for anything reading the image.
+let is *u8 as g_pe_dll_name with mut = "caustic.dll";
+let is i64 as g_pe_dll_name_len with mut = 11;
+
+// Basename of the output path, kept for the export directory.
+fn pe_set_dll_name(path as *u8) as void {
+    let is i64 as n = reader.strlen(path);
+    let is i64 as start with mut = 0;
+    let is i64 as i with mut = 0;
+    while (i < n) {
+        if (path[i] == 47) { start = i + 1; }   // '/'
+        i = i + 1;
+    }
+    g_pe_dll_name = cast(*u8, cast(i64, path) + start);
+    g_pe_dll_name_len = n - start;
+}
 
 fn _pe_name_lt(a as *u8, alen as i32, b as *u8, blen as i32) as i32 {
     let is i32 as n with mut = alen;
@@ -93,7 +110,7 @@ fn build_pe_export_dir(ls as *linker.LinkerState, rodata_buf as *reader.ByteBuff
         reader.buf_emit32_le(rodata_buf, g.vaddr - ls.base_addr + stub_size);
         k = k + 1;
     }
-    let is i64 as cur with mut = strs_off + PE_DLL_NAME_LEN + 1;
+    let is i64 as cur with mut = strs_off + g_pe_dll_name_len + 1;
     k = 0;
     while (k < n) {                                   // AddressOfNames: rodata-rel string offsets
         let is *linker.GlobalSym as g = linker.gsym_get(gsyms, idx[k]);
@@ -103,7 +120,7 @@ fn build_pe_export_dir(ls as *linker.LinkerState, rodata_buf as *reader.ByteBuff
     }
     k = 0;
     while (k < n) { reader.buf_emit16_le(rodata_buf, k); k = k + 1; }   // ordinals = index
-    reader.buf_append(rodata_buf, PE_DLL_NAME, PE_DLL_NAME_LEN);        // strings
+    reader.buf_append(rodata_buf, g_pe_dll_name, g_pe_dll_name_len);        // strings
     reader.buf_emit8(rodata_buf, 0);
     k = 0;
     while (k < n) {

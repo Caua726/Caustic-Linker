@@ -346,6 +346,7 @@ fn write_pe_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     let is i32 as export_n with mut = 0;
     let is i64 as export_names_off with mut = 0;
     if (ls.is_shared == 1) {
+        exports.pe_set_dll_name(output_path);
         exports.build_pe_export_dir(ls, rodata_buf, &export_dir_off, &export_n, &export_names_off, STUB_SIZE);
     }
 
