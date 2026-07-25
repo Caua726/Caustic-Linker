@@ -264,9 +264,9 @@ fn cse_fat_files(x64_path as *u8, a64_path as *u8, output_path as *u8) as i32 {
     return csew.write_cse_fat(cast(*u8, &paths), 2, output_path);
 }
 
-fn cse_combine_files(pe_path as *u8, elf_path as *u8, cst_path as *u8,
+fn cse_combine_files(pe_path as *u8, elf_path as *u8, elf_a64_path as *u8, cst_path as *u8,
                      output_path as *u8) as i32 {
-    return csew.write_cse_combine_ape(pe_path, elf_path, cst_path, output_path);
+    return csew.write_cse_combine_ape(pe_path, elf_path, elf_a64_path, cst_path, output_path);
 }
 
 fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
@@ -418,6 +418,7 @@ fn main(argc as i64, argv as i64) as i32 {
     let is *u8 as cse_pe_path with mut = cast(*u8, 0);
     let is *u8 as cse_elf_path with mut = cast(*u8, 0);
     let is *u8 as cse_cst_path with mut = cast(*u8, 0);
+    let is *u8 as cse_elf_a64_path with mut = cast(*u8, 0);
     // --cse-fat: fuse N finished pure .cse images (one per architecture) into a
     // single CST_ v4 container. Each --image= is a complete CST_ v3 file; the
     // arch comes from its own header byte.
@@ -490,6 +491,9 @@ fn main(argc as i64, argv as i64) as i32 {
         }
         else if (starts_with(arg, "--elf=") == 1) {
             cse_elf_path = cast(*u8, cast(i64, arg) + 6);
+        }
+        else if (starts_with(arg, "--elf-arm64=") == 1) {
+            cse_elf_a64_path = cast(*u8, cast(i64, arg) + 12);
         }
         else if (starts_with(arg, "--cst=") == 1) {
             cse_cst_path = cast(*u8, cast(i64, arg) + 6);
@@ -567,7 +571,8 @@ fn main(argc as i64, argv as i64) as i32 {
             print_str("caustic-ld: --cse-combine needs --pe=<file> and --elf=<file> (and optional --cst=<file>)\n");
             return 1;
         }
-        return csew.write_cse_combine_ape(cse_pe_path, cse_elf_path, cse_cst_path, output_path);
+        return csew.write_cse_combine_ape(cse_pe_path, cse_elf_path, cse_elf_a64_path,
+                                          cse_cst_path, output_path);
     }
 
     if (num_inputs == 0) {
