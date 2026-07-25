@@ -310,6 +310,60 @@ fn collect_all_cstimports(ls as *LinkerState) as void {
     }
 }
 
+// Merge the shared objects named by .cstimport entries into needed_libs, so an
+// ELF link emits a DT_NEEDED for each one and the undefined symbols they cover
+// resolve at load time. On PE the same entries build the import table instead,
+// so callers gate this on a non-PE output.
+//
+// The name is taken verbatim from the extern annotation (`extern "libm.so.6"`),
+// which means it is already a soname — no /usr/lib probing, unlike the -l<name>
+// path in lib_to_soname. A program therefore does not have to repeat -l for a
+// library its own source already named.
+fn add_cstimport_needed_libs(ls as *LinkerState) as void {
+    collect_all_cstimports(ls);
+    if (ls.cstimport_count == 0) { return; }
+
+    // needed_libs is sized exactly to the -l count (and is null when no -l was
+    // passed), so grow it to hold every name we might append.
+    let is *u8 as grown = om.opt_alloc(cast(i64, ls.needed_count + ls.cstimport_count) * 8);
+    let is *i64 as dst = cast(*i64, grown);
+    let is i32 as i with mut = 0;
+    while (i < ls.needed_count) {
+        let is *i64 as old = cast(*i64, ls.needed_libs);
+        dst[i] = old[i];
+        i = i + 1;
+    }
+    let is i32 as n with mut = ls.needed_count;
+
+    let is *i64 as dp = cast(*i64, ls.cstimport_dll_ptrs);
+    let is *i32 as dl = cast(*i32, ls.cstimport_dll_lens);
+    let is i32 as k with mut = 0;
+    while (k < ls.cstimport_count) {
+        let is *u8 as nm = cast(*u8, dp[k]);
+        let is i32 as nl = dl[k];
+        let is i32 as dup with mut = 0;
+        let is i32 as j with mut = 0;
+        while (j < n) {
+            let is *u8 as ex = cast(*u8, dst[j]);
+            if (bytes_eq(ex, reader.cstrlen(ex), nm, nl) == 1) { dup = 1; }
+            j = j + 1;
+        }
+        if (dup == 0) {
+            // .cstimport stores (ptr, len) with no terminator; DT_NEEDED goes
+            // through .dynstr as a C string, so copy and terminate.
+            let is *u8 as cp = om.opt_alloc(cast(i64, nl) + 1);
+            let is i32 as c with mut = 0;
+            while (c < nl) { cp[c] = nm[c]; c = c + 1; }
+            cp[nl] = 0;
+            dst[n] = cast(i64, cp);
+            n = n + 1;
+        }
+        k = k + 1;
+    }
+    ls.needed_libs = grown;
+    ls.needed_count = n;
+}
+
 fn get_obj(ls as *LinkerState, idx as i32) as *reader.ObjFile {
     let is *i64 as arr = cast(*i64, ls.objs);
     return cast(*reader.ObjFile, arr[idx]);

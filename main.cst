@@ -292,6 +292,16 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
     // Phase 2: Assign virtual addresses
     linker.assign_addresses(&ls);
 
+    // ELF: an extern's own library annotation supplies DT_NEEDED, so a program
+    // that names its libraries in source needs no -l on the command line. Runs
+    // before build_symtab so its unresolved-symbol warning knows a shared object
+    // is expected to provide them, and before the dispatch below, which picks
+    // the dynamic writer on needed_count > 0.
+    let is *tgt.Target as t = tgt.target_get();
+    if (t.object_format != 2 && t.object_format != 3) {
+        linker.add_cstimport_needed_libs(&ls);
+    }
+
     // Phase 3: Build symbol table + patch _start
     let is i32 as sym_err = linker.build_symtab(&ls);
     if (sym_err != 0) { return 1; }
@@ -301,7 +311,6 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
     // PE/Windows path: collect .cstimport entries, dispatch to PE writer
     // which handles apply_relocations internally (it must run AFTER
     // __imp_<sym> gsyms are registered so PC32 reloc resolves to IAT).
-    let is *tgt.Target as t = tgt.target_get();
     if (g_shared == 1 && t.object_format != 2 && t.object_format != 3) {
         reloc.apply_relocations(&ls);
         write_err = writer.write_shared_object(&ls, output_path);
@@ -603,6 +612,13 @@ fn main(argc as i64, argv as i64) as i32 {
         print_str("\n");
     }
 
+    // See the integrated pipeline above: extern annotations become DT_NEEDED,
+    // and this has to precede build_symtab's unresolved-symbol warning.
+    let is *tgt.Target as t_main = tgt.target_get();
+    if (t_main.object_format != 2 && t_main.object_format != 3) {
+        linker.add_cstimport_needed_libs(&ls);
+    }
+
     // Phase 3: Build symbol table + patch _start
     let is i32 as sym_err = linker.build_symtab(&ls);
     if (sym_err != 0) {
@@ -619,7 +635,6 @@ fn main(argc as i64, argv as i64) as i32 {
     let is i32 as write_err with mut = 0;
 
     // PE/Windows path: collect cstimport from objects, dispatch to PE writer.
-    let is *tgt.Target as t_main = tgt.target_get();
     if (shared_mode == 1 && t_main.object_format != 2 && t_main.object_format != 3) {
         // --shared (ELF): relocate (PC-relative → bias-independent) → ET_DYN .so.
         // For Windows (object_format==2), --shared falls through to the PE writer
