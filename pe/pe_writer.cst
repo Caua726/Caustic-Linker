@@ -658,7 +658,7 @@ fn write_pe_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     reader.buf_emit8(&out, 0);  reader.buf_emit8(&out, 0);
 
     // 9. COFF header
-    reader.buf_emit16_le(&out, IMAGE_FILE_MACHINE_AMD64);
+    reader.buf_emit16_le(&out, cast(i64, pe_machine()));
     let is i32 as num_sections = 2 + has_rodata + has_data + 2 + has_reloc;
     reader.buf_emit16_le(&out, num_sections);                 // NumberOfSections
     reader.buf_emit32_le(&out, 0);                            // TimeDateStamp

@@ -191,8 +191,8 @@ fn read_coff_obj(path as *u8, obj as *reader.ObjFile) as i32 {
 
     // === File header (20 bytes) ===
     let is i64 as machine = reader.read_u16(data, 0);
-    if (machine != 34404) {  // 0x8664
-        io._write_fd(io.STDERR, "caustic-ld: not COFF AMD64\n", 27);
+    if (machine != 34404 && machine != 43620) {  // 0x8664 AMD64, 0xAA64 ARM64
+        io._write_fd(io.STDERR, "caustic-ld: not a COFF AMD64/ARM64 object\n", 42);
         return 1;
     }
     let is i64 as num_sections = reader.read_u16(data, 2);
@@ -229,6 +229,9 @@ fn read_coff_obj(path as *u8, obj as *reader.ObjFile) as i32 {
     obj.csec_name_lens = om.opt_alloc(32 * 4);
     obj.csec_indices = om.opt_alloc(32 * 4);
     obj.csec_offsets = om.opt_alloc(32 * 8);
+    // Parallel to the ELF reader's SHF_EXECINSTR bits; merge_sections reads
+    // this for every object, so leaving it null segfaults there.
+    obj.csec_execs = om.opt_alloc(32 * 4);
 
     let is i32 as si with mut = 0;
     while (si < cast(i32, num_sections)) {
@@ -286,6 +289,11 @@ fn read_coff_obj(path as *u8, obj as *reader.ObjFile) as i32 {
                 cnlens[ci] = name_len;
                 cidxs[ci] = 5 + ci;  // SECIDX_TEXT(1)..BSS(4) reserved; custom start at 5
                 sn_to_secidx[coff_sn] = 5 + ci;
+                // IMAGE_SCN_MEM_EXECUTE (0x20000000) — the COFF spelling of
+                // SHF_EXECINSTR, telling the layout this section holds code.
+                let is i64 as scn_chars = reader.read_u32(data, sent + 36);
+                let is *i32 as cexecs = cast(*i32, obj.csec_execs);
+                if ((scn_chars & 536870912) != 0) { cexecs[ci] = 1; } else { cexecs[ci] = 0; }
                 obj.csec_count = obj.csec_count + 1;
             }
         }

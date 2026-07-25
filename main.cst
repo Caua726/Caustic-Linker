@@ -237,8 +237,8 @@ fn read_obj_auto(path as *u8, obj as *reader.ObjFile) as i32 {
     let is i64 as n = io._read_fd(fd, &magic, 4);
     io._close_fd(fd);
     if (n < 2) { return reader.read_obj(path, obj); }
-    if (magic[0] == 100 && magic[1] == 134) {
-        // 0x64 0x86 — COFF AMD64
+    // 0x8664 = COFF AMD64, 0xAA64 = COFF ARM64 (both little-endian).
+    if (magic[0] == 100 && (magic[1] == 134 || magic[1] == 170)) {
         return coff_reader.read_coff_obj(path, obj);
     }
     return reader.read_obj(path, obj);
