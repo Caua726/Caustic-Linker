@@ -487,7 +487,7 @@ let is i64 as CSE_APE_SHIFT with imut = 512;   // 0x200 — multiple of PE FileA
 // could plant a 0x27 (') inside the shell-quoted region; v2 stores them as ASCII
 // decimal. The kernel gates on this so a v1-era loader rejects rather than
 // misreads. Bump together with causticos/kernel/sys/cse.cst.
-let is i32 as CSE_MINI_VERSION with imut = 2;
+let is i32 as CSE_MINI_VERSION with imut = 3;
 
 fn cse_rd_u16(p as *u8, off as i32) as i32 {
     return cast(i32, p[off]) + cast(i32, p[off + 1]) * 256;
@@ -572,7 +572,7 @@ fn _cse_shift_debug_dir(pd as *u8, pe_size as i64, eo as i32, opt_sz as i32,
 }
 
 fn write_cse_combine_ape(pe_path as *u8, elf_path as *u8, elf_a64_path as *u8,
-                         cst_path as *u8, output_path as *u8) as i32 {
+                         pe_a64_path as *u8, cst_path as *u8, output_path as *u8) as i32 {
     let is reader.ByteBuffer as pe = reader.buf_init(262144);
     let is i64 as pe_size = cse_read_file_into(&pe, pe_path);
     if (pe_size <= 0) {
@@ -593,6 +593,20 @@ fn write_cse_combine_ape(pe_path as *u8, elf_path as *u8, elf_a64_path as *u8,
         elf_a64_size = cse_read_file_into(&elf_a64, elf_a64_path);
         if (elf_a64_size <= 0) {
             io._write_fd(io.STDERR, "caustic-ld: --cse-combine: cannot read AArch64 ELF\n", 51);
+            return 1;
+        }
+    }
+    // ARM64 Windows body. The PE loader can only ever see one Machine, so this
+    // is not reachable by Windows itself: it is carried for the entry stub to
+    // find, detect an ARM64 host via IsWow64Process2 and relaunch. Until that
+    // stub exists the body is inert, but its location is recorded so turning it
+    // on changes nothing about the container.
+    let is reader.ByteBuffer as pe_a64 = reader.buf_init(262144);
+    let is i64 as pe_a64_size with mut = 0;
+    if (cast(i64, pe_a64_path) != 0) {
+        pe_a64_size = cse_read_file_into(&pe_a64, pe_a64_path);
+        if (pe_a64_size <= 0) {
+            io._write_fd(io.STDERR, "caustic-ld: --cse-combine: cannot read ARM64 PE\n", 48);
             return 1;
         }
     }
@@ -654,6 +668,11 @@ fn write_cse_combine_ape(pe_path as *u8, elf_path as *u8, elf_a64_path as *u8,
         elf_a64_off = (after_elfs + 7) & (0 - 8);
         after_elfs = elf_a64_off + elf_a64_size;
     }
+    let is i64 as pe_a64_off with mut = 0;
+    if (pe_a64_size > 0) {
+        pe_a64_off = (after_elfs + 15) & (0 - 16);
+        after_elfs = pe_a64_off + pe_a64_size;
+    }
     let is i64 as cst_off = (after_elfs + 7) & (0 - 8);
 
     // Assemble the polyglot.
@@ -669,13 +688,16 @@ fn write_cse_combine_ape(pe_path as *u8, elf_path as *u8, elf_a64_path as *u8,
     //   0x40 4  "CST*"
     //   0x44 2  version = 2      0x46 2 reserved
     //   0x48 12 cst_body_offset  (zero-padded ASCII decimal)
-    //   0x54 12 cst_body_size    (zero-padded ASCII decimal)   -> ends at 0x60
+    //   0x54 12 cst_body_size     0x60 12 pe_arm64_offset
+    //   0x6C 12 pe_arm64_size    (0 = absent)                  -> ends at 0x78
     cse_emit_str(&out, "CST*");                        // 0x40 magic
     reader.buf_emit16_le(&out, CSE_MINI_VERSION);      // 0x44 version = 2
     reader.buf_emit16_le(&out, 0);                     // 0x46 reserved
     cse_emit_decimal_fixed(&out, cst_off, 12);         // 0x48 cst_body_offset
     let is i64 as cst_body_size = cast(i64, cst_size);
-    cse_emit_decimal_fixed(&out, cst_body_size, 12);   // 0x54 cst_body_size (ends 0x60)
+    cse_emit_decimal_fixed(&out, cst_body_size, 12);   // 0x54 cst_body_size
+    cse_emit_decimal_fixed(&out, pe_a64_off, 12);      // 0x60 pe_arm64_offset
+    cse_emit_decimal_fixed(&out, pe_a64_size, 12);     // 0x6C pe_arm64_size (ends 0x78)
     // Belt and braces: every byte between the opening quote (offset 7) and the
     // closing one is shell-parsed. A stray 0x27 there terminates the string
     // early and /bin/sh starts executing the binary payload. The encodings above
@@ -727,6 +749,10 @@ fn write_cse_combine_ape(pe_path as *u8, elf_path as *u8, elf_a64_path as *u8,
     if (elf_a64_size > 0) {
         reader.buf_pad_to(&out, elf_a64_off);
         reader.buf_append(&out, elf_a64.data, elf_a64_size);
+    }
+    if (pe_a64_size > 0) {
+        reader.buf_pad_to(&out, pe_a64_off);
+        reader.buf_append(&out, pe_a64.data, pe_a64_size);
     }
     if (cst_size > 0) {
         reader.buf_pad_to(&out, cst_off);   // == align8(elf_off+elf_size); recorded in mini-header
