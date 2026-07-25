@@ -99,6 +99,15 @@ let is i64 as CSE_PAGE with imut = 4096;
 // clean and failed at load, so the writer enforces the same ceiling and says so.
 let is i32 as CSE_MAX_SEGS with imut = 16;
 
+// The container's version is major.minor in two bytes, not one u16: an image
+// and the container that indexes it are both CST_ v3, told apart by the minor.
+// minor 0 = a plain image, minor 1 = an index over N of them.
+let is i32 as CSE_CONTAINER_MAJOR with imut = 3;
+let is i32 as CSE_CONTAINER_MINOR with imut = 1;
+let is i32 as CSE_FAT_HDR with imut = 16;
+let is i32 as CSE_FAT_MAX with imut = 8;
+
+
 // Write a finished output buffer to disk. Mirrors elf_writer's helper so
 // cse_writer stays independent of the (large) elf_writer module.
 fn cse_write_buf_to_file(out as *reader.ByteBuffer, output_path as *u8) as i32 {
@@ -321,13 +330,31 @@ fn cse_emit_cst_v2(out as *reader.ByteBuffer, ls as *linker.LinkerState) as i32 
     return 0;
 }
 
-// Pure mode: compact CST_ v2 image. Runs on CausticOS via its loader.
+// Pure mode. The image is wrapped in the same container a multi-architecture
+// build produces, holding exactly one slice — so every .cse has one shape and
+// the loader has one path, whether it names one architecture or several.
 fn write_cse_pure(ls as *linker.LinkerState, output_path as *u8) as i32 {
     // Resolve relocations against the assigned vaddrs (static; CausticOS
     // syscall ABI means no dynamic linking in the MVP).
     reloc.apply_relocations(ls);
+    let is reader.ByteBuffer as img = reader.buf_init(65536);
+    if (cse_emit_cst_v2(&img, ls) != 0) { return 1; }
+
     let is reader.ByteBuffer as out = reader.buf_init(65536);
-    if (cse_emit_cst_v2(&out, ls) != 0) { return 1; }
+    reader.buf_emit8(&out, 67); reader.buf_emit8(&out, 83);
+    reader.buf_emit8(&out, 84); reader.buf_emit8(&out, 95);      // "CST_"
+    reader.buf_emit8(&out, cast(i64, CSE_CONTAINER_MAJOR));
+    reader.buf_emit8(&out, cast(i64, CSE_CONTAINER_MINOR));
+    reader.buf_emit8(&out, 1);                                   // image_count
+    reader.buf_emit8(&out, 0);                                   // flags
+    reader.buf_emit32_le(&out, cast(i64, CSE_FAT_HDR));          // index_off
+    reader.buf_emit32_le(&out, 0);                               // reserved
+    let is i64 as img_off = (cast(i64, CSE_FAT_HDR) + 8 + 15) & (0 - 16);
+    reader.buf_emit8(&out, cast(i64, img.data[6]));              // arch, from the image
+    reader.buf_emit8(&out, 0); reader.buf_emit8(&out, 0); reader.buf_emit8(&out, 0);
+    reader.buf_emit32_le(&out, img_off);
+    reader.buf_pad_to(&out, img_off);
+    reader.buf_append(&out, img.data, img.len);
     return cse_write_buf_to_file(&out, output_path);
 }
 
@@ -770,7 +797,7 @@ fn write_cse_combine_ape(pe_path as *u8, elf_path as *u8, elf_a64_path as *u8,
 //
 //   Header (16 bytes):
 //     0x00 4  "CST_"
-//     0x04 2  version = 4
+//     0x04 1  major = 3     0x05 1  minor = 1
 //     0x06 1  image_count
 //     0x07 1  flags
 //     0x08 4  index_off  (= 0x10)
@@ -780,15 +807,13 @@ fn write_cse_combine_ape(pe_path as *u8, elf_path as *u8, elf_a64_path as *u8,
 //     +0x01 3  reserved
 //     +0x04 4  image_off   (file offset of a complete CST_ v3 image)
 //   Then: the images, each 16-byte aligned.
-let is i32 as CSE_FAT_VERSION with imut = 4;
-let is i32 as CSE_FAT_HDR with imut = 16;
-let is i32 as CSE_FAT_MAX with imut = 8;
 
 // Fuse `n` finished pure .cse images into one v4 container. Each input must be
 // a CST_ image; its arch byte is read from the image itself, so callers do not
 // have to name it.
-fn write_cse_fat(paths as *u8, n as i32, output_path as *u8) as i32 {
-    if (n <= 0 || n > CSE_FAT_MAX) {
+fn write_cse_fat(paths as *u8, n_in as i32, output_path as *u8) as i32 {
+    let is i32 as n with mut = n_in;
+    if (n_in <= 0 || n_in > CSE_FAT_MAX) {
         io._write_fd(io.STDERR, "caustic-ld: --cse-fat needs 1..8 --image=<file>\n", 48);
         return 1;
     }
@@ -797,8 +822,9 @@ fn write_cse_fat(paths as *u8, n as i32, output_path as *u8) as i32 {
     let is [8]i64 as bufs;
     let is [8]i64 as sizes;
     let is [8]i32 as archs;
+    let is i32 as n_img with mut = 0;
     let is i32 as i with mut = 0;
-    while (i < n) {
+    while (i < n_in) {
         let is *u8 as bb = om.opt_alloc(sizeof(reader.ByteBuffer));
         let is *reader.ByteBuffer as b = cast(*reader.ByteBuffer, bb);
         let is reader.ByteBuffer as tmp = reader.buf_init(65536);
@@ -817,11 +843,41 @@ fn write_cse_fat(paths as *u8, n as i32, output_path as *u8) as i32 {
             io._write_fd(io.STDERR, "\n", 1);
             return 1;
         }
-        bufs[i] = cast(i64, b.data);
-        sizes[i] = got;
-        archs[i] = cast(i32, d[6]);
+        // Inputs are containers now (a single-target link wraps its image in
+        // one), so unwrap to the images inside rather than nesting. A plain
+        // image — minor 0 — is taken as it stands.
+        if (d[4] == 3 && d[5] == 1) {
+            let is i32 as ic = cast(i32, d[6]);
+            let is i64 as idx = cse_rd_u32(d, 8);
+            let is i32 as k with mut = 0;
+            while (k < ic) {
+                if (n_img >= CSE_FAT_MAX) {
+                    io._write_fd(io.STDERR, "caustic-ld: --cse-fat: too many images\n", 39);
+                    return 1;
+                }
+                let is i64 as e = idx + cast(i64, k) * 8;
+                let is i64 as ioff = cse_rd_u32(d, cast(i32, e) + 4);
+                let is i64 as iend with mut = got;
+                if (k + 1 < ic) { iend = cse_rd_u32(d, cast(i32, e) + 8 + 4); }
+                bufs[n_img] = cast(i64, d) + ioff;
+                sizes[n_img] = iend - ioff;
+                archs[n_img] = cast(i32, d[cast(i32, ioff) + 6]);
+                n_img = n_img + 1;
+                k = k + 1;
+            }
+        } else {
+            if (n_img >= CSE_FAT_MAX) {
+                io._write_fd(io.STDERR, "caustic-ld: --cse-fat: too many images\n", 39);
+                return 1;
+            }
+            bufs[n_img] = cast(i64, b.data);
+            sizes[n_img] = got;
+            archs[n_img] = cast(i32, d[6]);
+            n_img = n_img + 1;
+        }
         i = i + 1;
     }
+    n = n_img;
 
     // Reject duplicate architectures — the loader picks the first match, so a
     // duplicate would silently shadow rather than fail.
@@ -852,7 +908,8 @@ fn write_cse_fat(paths as *u8, n as i32, output_path as *u8) as i32 {
     let is reader.ByteBuffer as out = reader.buf_init(262144);
     reader.buf_emit8(&out, 67); reader.buf_emit8(&out, 83);
     reader.buf_emit8(&out, 84); reader.buf_emit8(&out, 95);      // "CST_"
-    reader.buf_emit16_le(&out, cast(i64, CSE_FAT_VERSION));
+    reader.buf_emit8(&out, cast(i64, CSE_CONTAINER_MAJOR));
+    reader.buf_emit8(&out, cast(i64, CSE_CONTAINER_MINOR));
     reader.buf_emit8(&out, cast(i64, n));                        // image_count
     reader.buf_emit8(&out, 0);                                   // flags
     reader.buf_emit32_le(&out, cast(i64, CSE_FAT_HDR));          // index_off
