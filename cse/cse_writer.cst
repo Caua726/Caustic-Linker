@@ -189,23 +189,87 @@ fn _cse_import_lib(nm as *u8, nl as i32) as i64 {
 //
 //   u32 import_count
 //   u32 lib_count
-//   lib_count * lib_name          (NUL-terminated, e.g. "libcaustic.csl")
+//   u32 name_count
+//   lib_count  * lib_name         (NUL-terminated, e.g. "libcaustic.csl")
+//   name_count * sym_name         (NUL-terminated, each DISTINCT symbol once)
 //   import_count * {
 //     u32 rtype                   (R_X86_64_*: 2=PC32, 4=PLT32, 1=64 …)
-//     u32 lib_idx                 (into the table above)
+//     u32 lib_idx                 (into the library table)
+//     u32 name_idx                (into the name table)
+//     u32 pad
 //     u64 site_vaddr              (absolute vaddr of the field to patch)
-//     sym_name                    (NUL-terminated)
 //   }
+//
+// The names are interned, and that is the difference between this being worth
+// doing and not. There is one entry per RELOCATION SITE, not per symbol: a
+// program calling outs fifty times has fifty imports of it. Spelling the name
+// out at each one meant ~90 bytes per call — the mangled names carry their
+// whole source path — against the ~20 bytes of syscall stub the import was
+// replacing. Measured on the first attempt: the compositor grew 6.7 KB, wm 5.5
+// KB, and the image grew 86 KB overall. Sharing the library made every program
+// that used it BIGGER.
+//
+// Interned, a call site costs 24 fixed bytes and the name is paid once.
 //
 // Minor 1 had a single library name and no per-import index, because with one
 // library the question never arose. It is gone rather than kept alongside: no
 // loader ever consumed it (the CausticOS kernel ignored the fields outright)
 // and no build emitted it, so there is no compatibility to preserve — only a
 // second format to keep working.
+let is i64 as CSE_IMP_MAX_NAMES with imut = 4096;
+let is [4096]i64 as _imp_name_ptr with mut;
+let is [4096]i32 as _imp_name_len with mut;
+let is i64 as _imp_name_count with mut = 0;
+
+fn _imp_name_eq(i as i64, nm as *u8, nl as i32) as i32 {
+    if (_imp_name_len[i] != nl) { return 0; }
+    let is *u8 as a = cast(*u8, _imp_name_ptr[i]);
+    let is i32 as k with mut = 0;
+    while (k < nl) {
+        if (a[k] != nm[k]) { return 0; }
+        k = k + 1;
+    }
+    return 1;
+}
+
+// Index of `nm` in the name table, adding it if new. -1 when the table is full,
+// which the caller reports rather than emitting an entry pointing nowhere.
+fn _imp_intern(nm as *u8, nl as i32) as i64 {
+    let is i64 as i with mut = 0;
+    while (i < _imp_name_count) {
+        if (_imp_name_eq(i, nm, nl) == 1) { return i; }
+        i = i + 1;
+    }
+    if (_imp_name_count >= CSE_IMP_MAX_NAMES) { return 0 - 1; }
+    _imp_name_ptr[_imp_name_count] = cast(i64, nm);
+    _imp_name_len[_imp_name_count] = nl;
+    _imp_name_count = _imp_name_count + 1;
+    return _imp_name_count - 1;
+}
+
 fn cse_emit_import_table(out as *reader.ByteBuffer, ls as *linker.LinkerState, n as i32) as void {
+    // Pass one: intern every distinct symbol, so the counts in the header are
+    // known before anything is written.
+    _imp_name_count = 0;
+    let is i32 as oi with mut = 0;
+    while (oi < ls.obj_count) {
+        let is *reader.ObjFile as obj = linker.get_obj(ls, oi);
+        let is i32 as ri with mut = 0;
+        while (ri < obj.reloc_count) {
+            let is *reader.ObjReloc as rel = reader.reloc_get(obj, ri);
+            let is i32 as nl with mut = 0;
+            let is *u8 as nm = _cse_import_name(ls, obj, rel, &nl);
+            if (cast(i64, nm) != 0) { _imp_intern(nm, nl); }
+            ri = ri + 1;
+        }
+        oi = oi + 1;
+    }
+
     reader.buf_emit32_le(out, cast(i64, n));
     let is i64 as nlibs = dyns.dynsyms_count();
     reader.buf_emit32_le(out, nlibs);
+    reader.buf_emit32_le(out, _imp_name_count);
+
     let is i64 as li with mut = 0;
     while (li < nlibs) {
         let is *u8 as ln = dyns.dynsyms_lib_name(li);
@@ -215,7 +279,14 @@ fn cse_emit_import_table(out as *reader.ByteBuffer, ls as *linker.LinkerState, n
         reader.buf_emit8(out, 0);
         li = li + 1;
     }
-    let is i32 as oi with mut = 0;
+    let is i64 as ni with mut = 0;
+    while (ni < _imp_name_count) {
+        reader.buf_append(out, cast(*u8, _imp_name_ptr[ni]), cast(i64, _imp_name_len[ni]));
+        reader.buf_emit8(out, 0);
+        ni = ni + 1;
+    }
+
+    oi = 0;
     while (oi < ls.obj_count) {
         let is *reader.ObjFile as obj = linker.get_obj(ls, oi);
         let is i32 as ri with mut = 0;
@@ -238,11 +309,16 @@ fn cse_emit_import_table(out as *reader.ByteBuffer, ls as *linker.LinkerState, n
                     io.print("' — import left unresolved\n");
                     lidx = 0;
                 }
+                let is i64 as nidx with mut = _imp_intern(nm, nl);
+                if (nidx < 0) {
+                    io.print("caustic-ld: import name table full\n");
+                    nidx = 0;
+                }
                 reader.buf_emit32_le(out, rel.rtype);
                 reader.buf_emit32_le(out, lidx);
+                reader.buf_emit32_le(out, nidx);
+                reader.buf_emit32_le(out, 0);
                 reader.buf_emit64_le(out, site);
-                reader.buf_append(out, nm, cast(i64, nl));
-                reader.buf_emit8(out, 0);
             }
             ri = ri + 1;
         }
