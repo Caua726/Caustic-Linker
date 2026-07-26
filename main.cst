@@ -298,7 +298,17 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
     if (t_init.object_format == 2) { init_base = 5368709120; }  // 0x140000000
     if (g_base_addr != 0) { init_base = g_base_addr; }
     // --shared ELF (.so): base 0 (position-independent). Windows .dll keeps base.
-    if (g_shared == 1 && t_init.object_format != 2) { init_base = 0; }
+    //
+    // A .csl is neither. The CausticOS loader maps a library at the vaddrs it
+    // was linked for and does not relocate the library itself, so two libraries
+    // built at the same base overlap in every process that uses both — and the
+    // one mapped second wins, silently, with the first one's callers landing
+    // inside it. An explicit --base therefore WINS for the CausticOS target:
+    // that is how the build hands each library its own window. Only an
+    // unspecified base still falls back to 0.
+    if (g_shared == 1 && t_init.object_format != 2) {
+        if (t_init.object_format != 3 || g_base_addr == 0) { init_base = 0; }
+    }
     let is linker.LinkerState as ls = linker.linker_init(init_base);
     if (g_entry_name != 0) {
         ls.entry_name = cast(*u8, g_entry_name);
