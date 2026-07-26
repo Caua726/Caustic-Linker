@@ -44,6 +44,7 @@ use "../elf/elf_writer.cst" as elfw;
 use "../core/linker.cst" as linker;
 use "../core/relocate.cst" as reloc;
 use "../../src/codegen/target.cst" as tgt;
+use "../../src/codegen/dynsyms.cst" as dyns;
 use "../../src/ir/opt_mem.cst" as om;
 
 // === .csl kernel32 imports (compat Windows path) =====================
@@ -177,10 +178,43 @@ fn cse_count_imports(ls as *linker.LinkerState) as i32 {
     return cnt;
 }
 
+// Which library exports this symbol, as an index into the table emitted below.
+// -1 when no registered library claims it, which the caller reports rather than
+// writing an entry the loader could only fail on.
+fn _cse_import_lib(nm as *u8, nl as i32) as i64 {
+    return dyns.dynsyms_lookup(nm, cast(i64, nl));
+}
+
+// Import table, minor 2 (see the version byte in the header):
+//
+//   u32 import_count
+//   u32 lib_count
+//   lib_count * lib_name          (NUL-terminated, e.g. "libcaustic.csl")
+//   import_count * {
+//     u32 rtype                   (R_X86_64_*: 2=PC32, 4=PLT32, 1=64 …)
+//     u32 lib_idx                 (into the table above)
+//     u64 site_vaddr              (absolute vaddr of the field to patch)
+//     sym_name                    (NUL-terminated)
+//   }
+//
+// Minor 1 had a single library name and no per-import index, because with one
+// library the question never arose. It is gone rather than kept alongside: no
+// loader ever consumed it (the CausticOS kernel ignored the fields outright)
+// and no build emitted it, so there is no compatibility to preserve — only a
+// second format to keep working.
 fn cse_emit_import_table(out as *reader.ByteBuffer, ls as *linker.LinkerState, n as i32) as void {
     reader.buf_emit32_le(out, cast(i64, n));
-    reader.buf_append(out, "libcaustic.csl", 14);
-    reader.buf_emit8(out, 0);
+    let is i64 as nlibs = dyns.dynsyms_count();
+    reader.buf_emit32_le(out, nlibs);
+    let is i64 as li with mut = 0;
+    while (li < nlibs) {
+        let is *u8 as ln = dyns.dynsyms_lib_name(li);
+        let is i64 as l with mut = 0;
+        while (ln[l] != 0) { l = l + 1; }
+        reader.buf_append(out, ln, l);
+        reader.buf_emit8(out, 0);
+        li = li + 1;
+    }
     let is i32 as oi with mut = 0;
     while (oi < ls.obj_count) {
         let is *reader.ObjFile as obj = linker.get_obj(ls, oi);
@@ -193,7 +227,19 @@ fn cse_emit_import_table(out as *reader.ByteBuffer, ls as *linker.LinkerState, n
                 let is i64 as site with mut = 0;
                 if (rel.section == reader.SECIDX_TEXT) { site = ls.text_vaddr + obj.text_offset + rel.offset; }
                 else if (rel.section == reader.SECIDX_DATA) { site = ls.data_vaddr + obj.data_offset + rel.offset; }
+                let is i64 as lidx with mut = _cse_import_lib(nm, nl);
+                // An undefined symbol no library claims cannot be written as an
+                // import: the loader would resolve it against nothing. It is
+                // recorded against library 0 and reported, so the failure names
+                // the symbol here instead of appearing as a jump to 0 later.
+                if (lidx < 0) {
+                    io.print("caustic-ld: warning: no .csl exports '");
+                    io.print(nm);
+                    io.print("' — import left unresolved\n");
+                    lidx = 0;
+                }
                 reader.buf_emit32_le(out, rel.rtype);
+                reader.buf_emit32_le(out, lidx);
                 reader.buf_emit64_le(out, site);
                 reader.buf_append(out, nm, cast(i64, nl));
                 reader.buf_emit8(out, 0);
@@ -285,7 +331,13 @@ fn cse_emit_cst_v2(out as *reader.ByteBuffer, ls as *linker.LinkerState) as i32 
     // Header.
     reader.buf_emit8(out, 67); reader.buf_emit8(out, 83);
     reader.buf_emit8(out, 84); reader.buf_emit8(out, 95);   // "CST_"
-    reader.buf_emit16_le(out, 3);                  // version 3 (segmented + import table)
+    // version: major 3, minor in the high byte. minor 2 marks the multi-library
+    // import table — the one that says WHICH library each symbol comes from. A
+    // static image stays 3.0; 3.1 is the fat multi-arch container, which only
+    // ever wraps images and never is one, so the three cannot collide.
+    let is i64 as cse_minor with mut = 0;
+    if (imp_n > 0) { cse_minor = 2; }
+    reader.buf_emit16_le(out, 3 + (cse_minor << 8));
     reader.buf_emit8(out, cast(i64, tgt.target_get().arch));   // 1 = x86_64, 2 = aarch64
     // flags byte: bit0 = dynamic stack growth. The codegen emits prologue stack
     // probes (+ __caustic_stkgrow) for recursive/indirect programs; this tells

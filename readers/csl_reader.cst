@@ -36,7 +36,7 @@
 // =======================================================
 
 use "../../std/io.cst" as io;
-use "../../src/ir/opt_mem.cst" as om;
+use "../../std/mem/core.cst" as core;
 
 let is i64 as CSL_HDR_SIZE with imut = 44;
 let is i64 as CSL_VERSION  with imut = 2;
@@ -74,7 +74,15 @@ fn csl_read(path as *u8, arch as i64, out as *CslLib) as i32 {
     io._lseek(fd, 0, io._SEEK_SET);
     if (sz < CSL_HDR_SIZE) { io._close_fd(fd); return cast(i32, 0 - 2); }
 
-    let is *u8 as buf = om.opt_alloc(sz);
+    // mmap, NOT the IR arena. The image has to outlive compilation: the
+    // compiler destroys that arena once the last file is compiled
+    // (main.cst's opt_bins_destroy), and the linker reads this table AFTER
+    // that, when it writes the import table. Allocating from the arena made
+    // every symbol look unexported at link time — every import silently
+    // attributed to library 0 — which is correct-looking output for a
+    // single-library link and wrong for every other one.
+    let is *u8 as buf = core.mmap_anon(sz);
+    if (cast(i64, buf) <= 0) { io._close_fd(fd); return cast(i32, 0 - 2); }
     // read() is allowed to come up short on a regular file; loop until the
     // whole image is in rather than trusting one call.
     let is i64 as got with mut = 0;
