@@ -558,6 +558,24 @@ fn cse_build_cst_body(ls as *linker.LinkerState, out_body as *reader.ByteBuffer)
 }
 
 // Shared implementation for compat + bundle.
+// The extractor below runs the native body from a TEMP file, so the running
+// binary knows nothing about where the image it came from was installed. The
+// compiler locates its stdlib at <binary>/../lib/caustic, which from /tmp is
+// /lib/caustic — it never resolves, and the search silently falls through to
+// /usr/local/lib/caustic, quite possibly an older install. Only the stub still
+// knows the real path, so it passes it on in CAUSTIC_LIB.
+//
+// Passing it as an argument instead is not an option: the compiler only accepts
+// --version and --help as the FIRST argument, so prepending anything to argv
+// breaks them. A caller who already set CAUSTIC_LIB keeps it. $0 with no slash
+// means a PATH lookup, so it is resolved before the dirname is taken. Every
+// byte lands in a NUL-free, quote-free region, hence no single quotes.
+fn cse_emit_lib_env(out as *reader.ByteBuffer) as void {
+    cse_emit_str(out, "__p=$0;case $__p in */*) ;; *) __p=$(command -v -- \"$__p\" 2>/dev/null||echo \"$__p\");;esac\n");
+    cse_emit_str(out, "__d=$(CDPATH= cd -- \"${__p%/*}/../lib/caustic\" 2>/dev/null&&pwd)\n");
+    cse_emit_str(out, "[ -n \"$__d\" ]&&[ -z \"${CAUSTIC_LIB:-}\" ]&&export CAUSTIC_LIB=$__d\n");
+}
+
 fn write_cse_selfextract(ls as *linker.LinkerState, output_path as *u8) as i32 {
     reloc.apply_relocations(ls);
 
@@ -604,7 +622,9 @@ fn write_cse_selfextract(ls as *linker.LinkerState, output_path as *u8) as i32 {
     cse_emit_decimal(&out, CSE_BODY_OFF);
     cse_emit_str(&out, ";__s=");
     cse_emit_decimal(&out, elf_size);
-    cse_emit_str(&out, ";__t=$(mktemp);tail -c +$((__o+1)) \"$0\"|head -c $__s>\"$__t\";chmod +x \"$__t\";exec \"$__t\" \"$@\"\n");
+    cse_emit_str(&out, ";\n");
+    cse_emit_lib_env(&out);
+    cse_emit_str(&out, "__t=$(mktemp);tail -c +$((__o+1)) \"$0\"|head -c $__s>\"$__t\";chmod +x \"$__t\";exec \"$__t\" \"$@\"\n");
     cse_emit_str(&out, "exit 1\n");
     // Pad with '#' comment bytes to CSE_BODY_OFF (NUL-free shell region).
     while (out.len < CSE_BODY_OFF) { reader.buf_emit8(&out, 35); }  // '#'
@@ -888,6 +908,7 @@ fn write_cse_combine_ape(pe_path as *u8, elf_path as *u8, elf_a64_path as *u8,
     }
     cse_emit_str(&out, "*) echo \"caustic: no body for $(uname -m)\" >&2;exit 1;;\n");
     cse_emit_str(&out, "esac\n");
+    cse_emit_lib_env(&out);
     cse_emit_str(&out, "__t=$(mktemp);tail -c +$((__o+1)) \"$0\"|head -c $__s>\"$__t\";chmod +x \"$__t\";exec \"$__t\" \"$@\"\n");
     cse_emit_str(&out, "exit 1\n");
     // The stub is padded out to the PE header; if it ever outgrows that gap the
