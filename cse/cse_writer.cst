@@ -413,15 +413,15 @@ fn cse_emit_cst_v2(out as *reader.ByteBuffer, ls as *linker.LinkerState) as i32 
     // ever wraps images and never is one, so the three cannot collide.
     let is i64 as cse_minor with mut = 0;
     if (imp_n > 0) { cse_minor = 2; }
-    reader.buf_emit16_le(out, 3 + (cse_minor << 8));
-    reader.buf_emit8(out, cast(i64, tgt.target_get().arch));   // 1 = x86_64, 2 = aarch64
+    reader.buf_emit16_le(out, cast(i32, 3 + (cse_minor << 8)));
+    reader.buf_emit8(out, cast(i32, tgt.target_get().arch));   // 1 = x86_64, 2 = aarch64
     // flags byte: bit0 = dynamic stack growth. The codegen emits prologue stack
     // probes (+ __caustic_stkgrow) for recursive/indirect programs; this tells
     // the loader to reserve the ceiling (0x2C) but commit only the initial
     // window, letting the probes grow it via SYS_COMMIT. 0 = strict eager stack.
     let is i32 as cse_flags with mut = 0;
     if (tgt.cse_stack_dynamic_get() == 1) { cse_flags = cse_flags | 1; }
-    reader.buf_emit8(out, cast(i64, cse_flags));   // flags
+    reader.buf_emit8(out, cast(i32, cse_flags));   // flags
     reader.buf_emit64_le(out, ls.entry_vaddr);     // entry_point
     reader.buf_emit64_le(out, ls.base_addr);       // base_addr
     reader.buf_emit32_le(out, cast(i64, n));       // seg_count
@@ -471,14 +471,14 @@ fn write_cse_pure(ls as *linker.LinkerState, output_path as *u8) as i32 {
     let is reader.ByteBuffer as out = reader.buf_init(65536);
     reader.buf_emit8(&out, 67); reader.buf_emit8(&out, 83);
     reader.buf_emit8(&out, 84); reader.buf_emit8(&out, 95);      // "CST_"
-    reader.buf_emit8(&out, cast(i64, CSE_CONTAINER_MAJOR));
-    reader.buf_emit8(&out, cast(i64, CSE_CONTAINER_MINOR));
+    reader.buf_emit8(&out, cast(i32, CSE_CONTAINER_MAJOR));
+    reader.buf_emit8(&out, cast(i32, CSE_CONTAINER_MINOR));
     reader.buf_emit8(&out, 1);                                   // image_count
     reader.buf_emit8(&out, 0);                                   // flags
     reader.buf_emit32_le(&out, cast(i64, CSE_FAT_HDR));          // index_off
     reader.buf_emit32_le(&out, 0);                               // reserved
     let is i64 as img_off = (cast(i64, CSE_FAT_HDR) + 8 + 15) & (0 - 16);
-    reader.buf_emit8(&out, cast(i64, img.data[6]));              // arch, from the image
+    reader.buf_emit8(&out, cast(i32, img.data[6]));              // arch, from the image
     reader.buf_emit8(&out, 0); reader.buf_emit8(&out, 0); reader.buf_emit8(&out, 0);
     reader.buf_emit32_le(&out, img_off);
     reader.buf_pad_to(&out, img_off);
@@ -1057,15 +1057,15 @@ fn write_cse_fat(paths as *u8, n_in as i32, output_path as *u8) as i32 {
     let is reader.ByteBuffer as out = reader.buf_init(262144);
     reader.buf_emit8(&out, 67); reader.buf_emit8(&out, 83);
     reader.buf_emit8(&out, 84); reader.buf_emit8(&out, 95);      // "CST_"
-    reader.buf_emit8(&out, cast(i64, CSE_CONTAINER_MAJOR));
-    reader.buf_emit8(&out, cast(i64, CSE_CONTAINER_MINOR));
-    reader.buf_emit8(&out, cast(i64, n));                        // image_count
+    reader.buf_emit8(&out, cast(i32, CSE_CONTAINER_MAJOR));
+    reader.buf_emit8(&out, cast(i32, CSE_CONTAINER_MINOR));
+    reader.buf_emit8(&out, cast(i32, n));                        // image_count
     reader.buf_emit8(&out, 0);                                   // flags
     reader.buf_emit32_le(&out, cast(i64, CSE_FAT_HDR));          // index_off
     reader.buf_emit32_le(&out, 0);                               // reserved
     i = 0;
     while (i < n) {
-        reader.buf_emit8(&out, cast(i64, archs[i]));
+        reader.buf_emit8(&out, cast(i32, archs[i]));
         reader.buf_emit8(&out, 0); reader.buf_emit8(&out, 0); reader.buf_emit8(&out, 0);
         reader.buf_emit32_le(&out, offs[i]);
         i = i + 1;
@@ -1144,7 +1144,7 @@ fn cse_emit_csl_image(out as *reader.ByteBuffer, ls as *linker.LinkerState, flag
 
     reader.buf_emit8(out, 67); reader.buf_emit8(out, 83); reader.buf_emit8(out, 76); reader.buf_emit8(out, 95);  // "CSL_"
     reader.buf_emit16_le(out, 2);                   // version 2 (+ kernel32 import table)
-    reader.buf_emit8(out, cast(i64, tgt.target_get().arch));   // 1 = x86_64, 2 = aarch64
+    reader.buf_emit8(out, cast(i32, tgt.target_get().arch));   // 1 = x86_64, 2 = aarch64
     reader.buf_emit8(out, flags);
     reader.buf_emit64_le(out, ls.base_addr);
     reader.buf_emit32_le(out, cast(i64, n));

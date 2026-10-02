@@ -83,7 +83,7 @@ fn build_reloc_blob(ls as *linker.LinkerState, out as *reader.ByteBuffer,
         let is i64 as DIR64_TAG = 40960;       // 10 << 12
         let is i32 as k with mut = cur;
         while (k < end) {
-            reader.buf_emit16_le(out, DIR64_TAG + (rvas[k] % 4096));
+            reader.buf_emit16_le(out, cast(i32, DIR64_TAG + (rvas[k] % 4096)));
             k = k + 1;
         }
         if (needs_pad == 1) {

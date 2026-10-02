@@ -444,7 +444,7 @@ fn write_shared_object(ls as *linker.LinkerState, output_path as *u8) as i32 {
             if (g.section == 2) { shndx = 6; stt = 1; }
             if (g.section == 4) { shndx = 8; stt = 1; }
             reader.buf_emit32_le(&dynsym, nameoff);    // st_name
-            reader.buf_emit8(&dynsym, (1 << 4) + stt); // st_info = GLOBAL|stt
+            reader.buf_emit8(&dynsym, cast(i32, (1 << 4) + stt)); // st_info = GLOBAL|stt
             reader.buf_emit8(&dynsym, 0);              // st_other
             reader.buf_emit16_le(&dynsym, shndx);      // st_shndx
             reader.buf_emit64_le(&dynsym, g.vaddr);    // st_value (bias-relative)

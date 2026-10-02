@@ -612,7 +612,7 @@ fn _patch_subsec_size(out as *reader.ByteBuffer, size_off as i64) as void {
 fn _start_sym(out as *reader.ByteBuffer, kind as i32) as i64 {
     let is i64 as len_off = out.len;
     reader.buf_emit16_le(out, 0);                  // length placeholder
-    reader.buf_emit16_le(out, cast(i64, kind));
+    reader.buf_emit16_le(out, cast(i32, kind));
     return len_off;
 }
 
@@ -861,7 +861,7 @@ fn build_module_stream(ls as *linker.LinkerState,
                 reader.buf_emit32_le(out_buf, neg_off);
                 reader.buf_emit32_le(out_buf, fn_off);          // section-rel start
                 reader.buf_emit16_le(out_buf, 1);               // .text segment
-                reader.buf_emit16_le(out_buf, range_val);
+                reader.buf_emit16_le(out_buf, cast(i32, range_val));
                 _patch_sym_size(out_buf, def_sym);
 
                 li2 = li2 + 1;
@@ -1056,7 +1056,7 @@ fn _find_cststructs(obj as *reader.ObjFile) as *reader.ObjSection {
 // otherwise LF_ULONG (0x8004) + u32. Returns bytes written.
 fn _emit_lf_numeric(out_buf as *reader.ByteBuffer, value as i32) as i32 {
     if (value >= 0 && value < 32768) {
-        reader.buf_emit16_le(out_buf, cast(i64, value));
+        reader.buf_emit16_le(out_buf, cast(i32, value));
         return 2;
     }
     reader.buf_emit16_le(out_buf, 32772);                    // LF_ULONG
@@ -1117,10 +1117,10 @@ fn build_struct_records(ls as *linker.LinkerState,
                 // LF_NUMERIC offset, name+null, pad.
                 let is i32 as fl_start = cast(i32, out_buf.len);
                 reader.buf_emit16_le(out_buf, 0);                        // RecLen placeholder
-                reader.buf_emit16_le(out_buf, cast(i64, LF_FIELDLIST));
+                reader.buf_emit16_le(out_buf, cast(i32, LF_FIELDLIST));
                 fi = 0;
                 while (fi < cast(i32, num_fields) && fi < 64) {
-                    reader.buf_emit16_le(out_buf, cast(i64, LF_MEMBER));
+                    reader.buf_emit16_le(out_buf, cast(i32, LF_MEMBER));
                     reader.buf_emit16_le(out_buf, 3);                    // public
                     // Field type: resolve primitive/pointer/array; nested struct → T_NOTYPE
                     let is i32 as ft with mut = 0;
@@ -1168,8 +1168,8 @@ fn build_struct_records(ls as *linker.LinkerState,
                 // name+null, pad.
                 let is i32 as st_start = cast(i32, out_buf.len);
                 reader.buf_emit16_le(out_buf, 0);                        // RecLen placeholder
-                reader.buf_emit16_le(out_buf, cast(i64, LF_STRUCTURE));
-                reader.buf_emit16_le(out_buf, num_fields);               // Count
+                reader.buf_emit16_le(out_buf, cast(i32, LF_STRUCTURE));
+                reader.buf_emit16_le(out_buf, cast(i32, num_fields));               // Count
                 reader.buf_emit16_le(out_buf, 0);                        // Property
                 reader.buf_emit32_le(out_buf, cast(i64, fieldlist_idx));
                 reader.buf_emit32_le(out_buf, 0);                        // DerivedFrom
@@ -1312,7 +1312,7 @@ fn _resolve_type(kind as i32, extra as i32,
         let is i32 as struct_cv with mut = 0;
         if (extra >= 0 && extra < num_structs) { struct_cv = struct_indices[extra]; }
         reader.buf_emit16_le(out_buf, 10);
-        reader.buf_emit16_le(out_buf, cast(i64, LF_POINTER));
+        reader.buf_emit16_le(out_buf, cast(i32, LF_POINTER));
         reader.buf_emit32_le(out_buf, cast(i64, struct_cv));
         reader.buf_emit32_le(out_buf, cast(i64, CV_PTR_ATTR_NEAR64));
         let is i32 as idx = *next_index;
@@ -1323,7 +1323,7 @@ fn _resolve_type(kind as i32, extra as i32,
         // LF_POINTER to primitive
         let is i32 as inner = _prim_to_cv(kind - 100);
         reader.buf_emit16_le(out_buf, 10);                  // RecLen value
-        reader.buf_emit16_le(out_buf, cast(i64, LF_POINTER));
+        reader.buf_emit16_le(out_buf, cast(i32, LF_POINTER));
         reader.buf_emit32_le(out_buf, cast(i64, inner));
         reader.buf_emit32_le(out_buf, cast(i64, CV_PTR_ATTR_NEAR64));
         let is i32 as idx = *next_index;
@@ -1363,12 +1363,12 @@ fn _resolve_type(kind as i32, extra as i32,
         let is i32 as payload = 11 + size_field_bytes;             // Kind(2)+Elem(4)+Idx(4)+size+name(1)
         let is i32 as total with mut = 2 + payload;                  // includes RecLen
         while ((total & 3) != 0) { total = total + 1; }
-        reader.buf_emit16_le(out_buf, cast(i64, total - 2));
-        reader.buf_emit16_le(out_buf, cast(i64, LF_ARRAY));
+        reader.buf_emit16_le(out_buf, cast(i32, total - 2));
+        reader.buf_emit16_le(out_buf, cast(i32, LF_ARRAY));
         reader.buf_emit32_le(out_buf, cast(i64, elem_cv));
         reader.buf_emit32_le(out_buf, 117);                          // IndexType = T_UINT4
         if (size_field_bytes == 2) {
-            reader.buf_emit16_le(out_buf, cast(i64, total_bytes));
+            reader.buf_emit16_le(out_buf, cast(i32, total_bytes));
         } else {
             reader.buf_emit16_le(out_buf, 32772);                    // LF_ULONG = 0x8004
             reader.buf_emit32_le(out_buf, cast(i64, total_bytes));
@@ -1458,8 +1458,8 @@ fn build_tpi_body(ls as *linker.LinkerState, out_buf as *reader.ByteBuffer,
         let is i32 as arglist_raw = 8 + 4 * num_args;
         let is i32 as arglist_total with mut = arglist_raw;
         while ((arglist_total & 3) != 0) { arglist_total = arglist_total + 1; }
-        reader.buf_emit16_le(out_buf, cast(i64, arglist_total - 2));
-        reader.buf_emit16_le(out_buf, cast(i64, LF_ARGLIST));
+        reader.buf_emit16_le(out_buf, cast(i32, arglist_total - 2));
+        reader.buf_emit16_le(out_buf, cast(i32, LF_ARGLIST));
         reader.buf_emit32_le(out_buf, cast(i64, num_args));
         ai = 0;
         while (ai < num_args) {
@@ -1472,11 +1472,11 @@ fn build_tpi_body(ls as *linker.LinkerState, out_buf as *reader.ByteBuffer,
 
         // LF_PROCEDURE
         reader.buf_emit16_le(out_buf, 14);
-        reader.buf_emit16_le(out_buf, cast(i64, LF_PROCEDURE));
+        reader.buf_emit16_le(out_buf, cast(i32, LF_PROCEDURE));
         reader.buf_emit32_le(out_buf, cast(i64, ret_cv));
         reader.buf_emit8(out_buf, 0);                   // CallConv NEAR_C
         reader.buf_emit8(out_buf, 0);                   // FuncAttr
-        reader.buf_emit16_le(out_buf, cast(i64, num_args));
+        reader.buf_emit16_le(out_buf, cast(i32, num_args));
         reader.buf_emit32_le(out_buf, cast(i64, arglist_idx));
         let is i32 as proc_idx = next_index;
         next_index = next_index + 1;
@@ -1551,8 +1551,8 @@ fn _emit_lf_string_id(out_buf as *reader.ByteBuffer, s as *u8, slen as i32) as v
     let is i32 as raw = 9 + slen;
     let is i32 as total with mut = raw;
     while ((total & 3) != 0) { total = total + 1; }
-    reader.buf_emit16_le(out_buf, cast(i64, total - 2));
-    reader.buf_emit16_le(out_buf, cast(i64, LF_STRING_ID));
+    reader.buf_emit16_le(out_buf, cast(i32, total - 2));
+    reader.buf_emit16_le(out_buf, cast(i32, LF_STRING_ID));
     reader.buf_emit32_le(out_buf, 0);                              // ParentId
     let is i32 as i with mut = 0;
     while (i < slen) {
@@ -1610,8 +1610,8 @@ fn build_ipi_body(ls as *linker.LinkerState, out_buf as *reader.ByteBuffer,
         let is i32 as total with mut = raw;
         while ((total & 3) != 0) { total = total + 1; }
         let is i32 as proc_idx = proc_indices[fi];
-        reader.buf_emit16_le(out_buf, cast(i64, total - 2));
-        reader.buf_emit16_le(out_buf, cast(i64, LF_FUNC_ID));
+        reader.buf_emit16_le(out_buf, cast(i32, total - 2));
+        reader.buf_emit16_le(out_buf, cast(i32, LF_FUNC_ID));
         reader.buf_emit32_le(out_buf, 0);                              // scopeId
         reader.buf_emit32_le(out_buf, cast(i64, proc_idx));            // typeId
         let is i32 as ni with mut = 0;
@@ -1642,7 +1642,7 @@ fn build_ipi_body(ls as *linker.LinkerState, out_buf as *reader.ByteBuffer,
     // Raw = 2 + 2 + 2 + 5*4 = 26. Pad to 28. RecLen value = 26.
     let is i32 as bi_first = IPI_INDEX_BEGIN + fcount;
     reader.buf_emit16_le(out_buf, 26);
-    reader.buf_emit16_le(out_buf, cast(i64, LF_BUILDINFO));
+    reader.buf_emit16_le(out_buf, cast(i32, LF_BUILDINFO));
     reader.buf_emit16_le(out_buf, 5);                              // NumArgs
     reader.buf_emit32_le(out_buf, cast(i64, bi_first + 0));
     reader.buf_emit32_le(out_buf, cast(i64, bi_first + 1));
