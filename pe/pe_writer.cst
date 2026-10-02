@@ -588,10 +588,14 @@ fn write_pe_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     // User functions: enumerate gsyms with section=TEXT && defined=1 EXCEPT
     // __caustic_chkstk (already covered above). Sort by vaddr ascending so
     // we can use the next entry's vaddr as the current function's end.
-    let is [256]i32 as user_idxs;
+    //
+    // Sized by the symbol count. This was a [256] that stopped collecting at
+    // 256, so every function after it got no .pdata entry — no unwind
+    // information, which is what an exception or a stack walk through it needs.
+    let is *i32 as user_idxs = cast(*i32, om.opt_alloc(cast(i64, gsyms2.count) * 4 + 4));
     let is i32 as n_user with mut = 0;
     let is i32 as ui with mut = 0;
-    while (ui < gsyms2.count && n_user < 256) {
+    while (ui < gsyms2.count) {
         let is *linker.GlobalSym as g = linker.gsym_get(gsyms2, ui);
         if (g.defined == 1 && g.section == reader.SECIDX_TEXT
             && reader.streq(g.name, g.name_len, "__caustic_chkstk", 16) == 0) {
