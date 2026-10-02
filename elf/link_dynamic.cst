@@ -38,7 +38,7 @@ fn build_dynstr(ls as *linker.LinkerState, lib_offsets as *i32) as void {
     // Add library names
     let is *i64 as lib_arr = cast(*i64, ls.needed_libs);
     let is i32 as li with mut = 0;
-    while (li < ls.needed_count && li < 32) {
+    while (li < ls.needed_count) {
         lib_offsets[li] = cast(i32, dynstr.len);
         let is *u8 as lib_name = cast(*u8, lib_arr[li]);
         let is i64 as lib_len = reader.strlen(lib_name);
@@ -222,12 +222,15 @@ fn build_dynamic_metadata(ls as *linker.LinkerState,
                           reladyn_vaddr as i64) as void {
     build_interp(ls);
 
-    let is [32]i32 as lib_offsets;
-    build_dynstr(ls, &lib_offsets[0]);
+    // One offset per DT_NEEDED. This was a [32] array, filled for the first 32
+    // libraries only and then read for all of them, so the 33rd and later got
+    // a DT_NEEDED naming whatever offset the stack held.
+    let is *i32 as lib_offsets = cast(*i32, om.opt_alloc(cast(i64, ls.needed_count) * 4 + 4));
+    build_dynstr(ls, lib_offsets);
     build_dynsym_entries(ls);
     build_hash_section(ls);
     build_rela_plt_entries(ls);
-    build_dynamic_section(ls, &lib_offsets[0], got_vaddr, dynsym_vaddr,
+    build_dynamic_section(ls, lib_offsets, got_vaddr, dynsym_vaddr,
                           dynstr_vaddr, hash_vaddr, relaplt_vaddr,
                           reladyn_vaddr);
 }

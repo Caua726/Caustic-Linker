@@ -446,12 +446,13 @@ fn main(argc as i64, argv as i64) as i32 {
     let is i32 as freestanding with mut = 0;
     let is i32 as shared_mode with mut = 0;   // --shared: emit ET_DYN .so
 
-    // Collect input file paths (max 256)
-    let is [256]i64 as input_files;
+    // Input paths and -l libraries, each sized by argc — every one of them is
+    // an argument, so neither can outgrow it. These were [256] and [32] on the
+    // stack, filled with no bound check: the 33rd -l or the 257th input wrote
+    // past the array into the rest of main's frame.
+    let is *i64 as input_files = cast(*i64, om.opt_alloc(argc * 8));
     let is i32 as num_inputs with mut = 0;
-
-    // Collect -l libraries (max 32)
-    let is [32]i64 as needed_libs;
+    let is *i64 as needed_libs = cast(*i64, om.opt_alloc(argc * 8));
     let is i32 as needed_count with mut = 0;
 
     let is i64 as ai with mut = 1;
