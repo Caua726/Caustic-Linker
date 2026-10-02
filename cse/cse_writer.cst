@@ -216,10 +216,30 @@ fn _cse_import_lib(nm as *u8, nl as i32) as i64 {
 // loader ever consumed it (the CausticOS kernel ignored the fields outright)
 // and no build emitted it, so there is no compatibility to preserve — only a
 // second format to keep working.
-let is i64 as CSE_IMP_MAX_NAMES with imut = 4096;
-let is [4096]i64 as _imp_name_ptr with mut;
-let is [4096]i32 as _imp_name_len with mut;
+//
+// The name table grows. It was a fixed 4096, and past that every further
+// import was written against name 0 with only a message — an image that
+// resolved those imports to the wrong symbol.
+let is *i64 as _imp_name_ptr with mut;
+let is *i32 as _imp_name_len with mut;
 let is i64 as _imp_name_count with mut = 0;
+let is i64 as _imp_name_cap with mut = 0;
+
+fn _imp_names_grow() as void {
+    let is i64 as nc with mut = _imp_name_cap * 2;
+    if (nc == 0) { nc = 256; }
+    let is *i64 as np = cast(*i64, om.opt_alloc(nc * 8));
+    let is *i32 as nl = cast(*i32, om.opt_alloc(nc * 4));
+    let is i64 as i with mut = 0;
+    while (i < _imp_name_count) { np[i] = _imp_name_ptr[i]; nl[i] = _imp_name_len[i]; i = i + 1; }
+    if (_imp_name_cap > 0) {
+        om.opt_free(cast(*u8, _imp_name_ptr));
+        om.opt_free(cast(*u8, _imp_name_len));
+    }
+    _imp_name_ptr = np;
+    _imp_name_len = nl;
+    _imp_name_cap = nc;
+}
 
 fn _imp_name_eq(i as i64, nm as *u8, nl as i32) as i32 {
     if (_imp_name_len[i] != nl) { return 0; }
@@ -232,15 +252,14 @@ fn _imp_name_eq(i as i64, nm as *u8, nl as i32) as i32 {
     return 1;
 }
 
-// Index of `nm` in the name table, adding it if new. -1 when the table is full,
-// which the caller reports rather than emitting an entry pointing nowhere.
+// Index of `nm` in the name table, adding it if new.
 fn _imp_intern(nm as *u8, nl as i32) as i64 {
     let is i64 as i with mut = 0;
     while (i < _imp_name_count) {
         if (_imp_name_eq(i, nm, nl) == 1) { return i; }
         i = i + 1;
     }
-    if (_imp_name_count >= CSE_IMP_MAX_NAMES) { return 0 - 1; }
+    if (_imp_name_count >= _imp_name_cap) { _imp_names_grow(); }
     _imp_name_ptr[_imp_name_count] = cast(i64, nm);
     _imp_name_len[_imp_name_count] = nl;
     _imp_name_count = _imp_name_count + 1;
@@ -309,11 +328,7 @@ fn cse_emit_import_table(out as *reader.ByteBuffer, ls as *linker.LinkerState, n
                     io.print("' — import left unresolved\n");
                     lidx = 0;
                 }
-                let is i64 as nidx with mut = _imp_intern(nm, nl);
-                if (nidx < 0) {
-                    io.print("caustic-ld: import name table full\n");
-                    nidx = 0;
-                }
+                let is i64 as nidx = _imp_intern(nm, nl);
                 reader.buf_emit32_le(out, rel.rtype);
                 reader.buf_emit32_le(out, lidx);
                 reader.buf_emit32_le(out, nidx);

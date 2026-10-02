@@ -281,7 +281,7 @@ struct ObjFile {
     reloc_count as i32;
 
     // Custom sections
-    csec_data as *u8;       // array of ObjSection (up to 32)
+    csec_data as *u8;       // array of ObjSection, one per custom section
     csec_names as *u8;      // array of *u8 (name pointers)
     csec_name_lens as *u8;  // array of i32
     csec_indices as *u8;    // array of i32 (original ELF sh_index)
@@ -445,9 +445,9 @@ struct ScanResult {
     rela_data_off as i64;
     rela_data_size as i64;
     // .rela.<custom> sections — one per non-text/non-data rela table.
-    csec_rela_off as *u8;       // 32 * i64
-    csec_rela_size as *u8;      // 32 * i64
-    csec_rela_shndx as *u8;     // 32 * i32 — sh_info of each rela (target section's ELF shndx)
+    csec_rela_off as *u8;       // e_shnum * i64
+    csec_rela_size as *u8;      // e_shnum * i64
+    csec_rela_shndx as *u8;     // e_shnum * i32 — sh_info of each rela (target section's ELF shndx)
     csec_rela_count as i32;
 }
 
@@ -465,13 +465,18 @@ fn parse_section_headers(data as *u8, obj as *ObjFile, sr as *ScanResult,
     obj.data_sec.size = 0;
     obj.rodata.data = cast(*u8, 0);
     obj.rodata.size = 0;
+    // Custom sections and their .rela sections are sized by the object's own
+    // section count, which bounds both. They were fixed at 32 and the 33rd of
+    // either was skipped in silence: its contents never reached the output, and
+    // its relocations were never applied.
+    let is i64 as ncap = e_shnum + 1;
     obj.csec_count = 0;
-    obj.csec_data = om.opt_alloc(32 * sizeof(ObjSection));
-    obj.csec_names = om.opt_alloc(32 * 8);
-    obj.csec_name_lens = om.opt_alloc(32 * 4);
-    obj.csec_indices = om.opt_alloc(32 * 4);
-    obj.csec_execs = om.opt_alloc(32 * 4);
-    obj.csec_offsets = om.opt_alloc(32 * 8);
+    obj.csec_data = om.opt_alloc(ncap * sizeof(ObjSection));
+    obj.csec_names = om.opt_alloc(ncap * 8);
+    obj.csec_name_lens = om.opt_alloc(ncap * 4);
+    obj.csec_indices = om.opt_alloc(ncap * 4);
+    obj.csec_execs = om.opt_alloc(ncap * 4);
+    obj.csec_offsets = om.opt_alloc(ncap * 8);
 
     sr.symtab_off = 0;
     sr.symtab_size = 0;
@@ -483,9 +488,9 @@ fn parse_section_headers(data as *u8, obj as *ObjFile, sr as *ScanResult,
     sr.rela_text_size = 0;
     sr.rela_data_off = 0;
     sr.rela_data_size = 0;
-    sr.csec_rela_off    = om.opt_alloc(32 * 8);
-    sr.csec_rela_size   = om.opt_alloc(32 * 8);
-    sr.csec_rela_shndx  = om.opt_alloc(32 * 4);
+    sr.csec_rela_off    = om.opt_alloc(ncap * 8);
+    sr.csec_rela_size   = om.opt_alloc(ncap * 8);
+    sr.csec_rela_shndx  = om.opt_alloc(ncap * 4);
     sr.csec_rela_count  = 0;
 
     let is i64 as si with mut = 0;
@@ -516,7 +521,7 @@ fn parse_section_headers(data as *u8, obj as *ObjFile, sr as *ScanResult,
             }
             else {
                 // Custom section — store it
-                if (obj.csec_count < 32) {
+                if (cast(i64, obj.csec_count) < ncap) {
                     let is i32 as ci = obj.csec_count;
                     let is *ObjSection as cs = cast(*ObjSection, cast(i64, obj.csec_data) + cast(i64, ci) * sizeof(ObjSection));
                     cs.data = cast(*u8, cast(i64, data) + sh_offset);
@@ -566,7 +571,7 @@ fn parse_section_headers(data as *u8, obj as *ObjFile, sr as *ScanResult,
                 // .rela.<custom_section> — record sh_info (target section's
                 // ELF sh_index) so apply_relocations can find the right
                 // merged buffer.
-                if (sr.csec_rela_count < 32) {
+                if (cast(i64, sr.csec_rela_count) < ncap) {
                     let is i64 as sh_info = read_u32(data, sh + 44);
                     let is i32 as idx = sr.csec_rela_count;
                     let is *i64 as off_arr  = cast(*i64, sr.csec_rela_off);

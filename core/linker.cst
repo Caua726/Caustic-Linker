@@ -109,13 +109,14 @@ struct LinkerState {
     is_shared as i32;       // 1 when emitting a .so/.dll (no entry, base 0)
 
     // Custom sections (merged)
-    csec_bufs as *u8;      // array of *reader.ByteBuffer (up to 32)
+    csec_bufs as *u8;      // array of reader.ByteBuffer, csec_cap of them
     csec_names as *u8;     // array of *u8 name pointers
     csec_name_lens as *u8; // array of i32
     csec_sizes as *u8;     // array of i64
     csec_vaddrs as *u8;    // array of i64
     csec_execs as *u8;     // array of i32 — 1 = section holds code (SHF_EXECINSTR)
     csec_count as i32;
+    csec_cap as i32;       // entries allocated in each csec_* array
 
     // Dynamic linking
     needed_libs as *u8;     // array of *u8 c-strings (lib names like "libc.so.6")
@@ -135,11 +136,12 @@ struct LinkerState {
     // PE/Windows imports — collected from .cstimport custom section of each
     // input .obj during link. The PE writer groups by DLL and emits the
     // import table, ILT, IAT, hint/name table. Each entry is one (dll, sym).
-    cstimport_dll_ptrs as *u8;  // 1024 * 8 — *u8 dll name (in obj file memory)
-    cstimport_dll_lens as *u8;  // 1024 * 4 — i32 dll name length
-    cstimport_sym_ptrs as *u8;  // 1024 * 8 — *u8 sym name
-    cstimport_sym_lens as *u8;  // 1024 * 4 — i32 sym name length
+    cstimport_dll_ptrs as *u8;  // cap * 8 — *u8 dll name (in obj file memory)
+    cstimport_dll_lens as *u8;  // cap * 4 — i32 dll name length
+    cstimport_sym_ptrs as *u8;  // cap * 8 — *u8 sym name
+    cstimport_sym_lens as *u8;  // cap * 4 — i32 sym name length
     cstimport_count as i32;
+    cstimport_cap as i32;
 }
 
 fn alloc_bytebuf(cap as i64) as *u8 {
@@ -209,17 +211,19 @@ fn linker_init(base_addr as i64) as LinkerState {
     ls.dynamic_buf = cast(*u8, 0);
     ls.data_got_buf = cast(*u8, 0);
     ls.reladyn_buf = cast(*u8, 0);
-    ls.csec_bufs = om.opt_alloc(32 * sizeof(reader.ByteBuffer));
-    ls.csec_names = om.opt_alloc(32 * 8);
-    ls.csec_name_lens = om.opt_alloc(32 * 4);
-    ls.csec_sizes = om.opt_alloc(32 * 8);
-    ls.csec_vaddrs = om.opt_alloc(32 * 8);
-    ls.csec_execs = om.opt_alloc(32 * 4);
+    ls.csec_cap = 32;
+    ls.csec_bufs = om.opt_alloc(cast(i64, ls.csec_cap) * sizeof(reader.ByteBuffer));
+    ls.csec_names = om.opt_alloc(cast(i64, ls.csec_cap) * 8);
+    ls.csec_name_lens = om.opt_alloc(cast(i64, ls.csec_cap) * 4);
+    ls.csec_sizes = om.opt_alloc(cast(i64, ls.csec_cap) * 8);
+    ls.csec_vaddrs = om.opt_alloc(cast(i64, ls.csec_cap) * 8);
+    ls.csec_execs = om.opt_alloc(cast(i64, ls.csec_cap) * 4);
     ls.csec_count = 0;
-    ls.cstimport_dll_ptrs = om.opt_alloc(1024 * 8);
-    ls.cstimport_dll_lens = om.opt_alloc(1024 * 4);
-    ls.cstimport_sym_ptrs = om.opt_alloc(1024 * 8);
-    ls.cstimport_sym_lens = om.opt_alloc(1024 * 4);
+    ls.cstimport_cap = 1024;
+    ls.cstimport_dll_ptrs = om.opt_alloc(cast(i64, ls.cstimport_cap) * 8);
+    ls.cstimport_dll_lens = om.opt_alloc(cast(i64, ls.cstimport_cap) * 4);
+    ls.cstimport_sym_ptrs = om.opt_alloc(cast(i64, ls.cstimport_cap) * 8);
+    ls.cstimport_sym_lens = om.opt_alloc(cast(i64, ls.cstimport_cap) * 4);
     ls.cstimport_count = 0;
     return ls;
 }
@@ -250,14 +254,20 @@ fn bytes_eq(a as *u8, a_len as i32, b as *u8, b_len as i32) as i32 {
 // Wire format:
 //   u32 count
 //   for each: u32 dll_len, u32 sym_len, bytes[dll_len], bytes[sym_len]
+// The table grows. It was a fixed 1024 slots, failing the link past that — and
+// failing it on a duplicate too, since the ceiling was checked before the
+// dedup, so 1024 distinct imports and one repeat could not link.
+fn _cstimport_grow(ls as *LinkerState) as void {
+    let is i64 as n = cast(i64, ls.cstimport_count);
+    let is i64 as nc = cast(i64, ls.cstimport_cap) * 2;
+    ls.cstimport_dll_ptrs = _csec_grow_one(ls.cstimport_dll_ptrs, n * 8, nc * 8);
+    ls.cstimport_dll_lens = _csec_grow_one(ls.cstimport_dll_lens, n * 4, nc * 4);
+    ls.cstimport_sym_ptrs = _csec_grow_one(ls.cstimport_sym_ptrs, n * 8, nc * 8);
+    ls.cstimport_sym_lens = _csec_grow_one(ls.cstimport_sym_lens, n * 4, nc * 4);
+    ls.cstimport_cap = cast(i32, nc);
+}
+
 fn add_cstimport(ls as *LinkerState, dll as *u8, dll_len as i32, sym as *u8, sym_len as i32) as void {
-    // The table is a fixed 1024 slots (allocated in linker_init). Silently
-    // dropping past the ceiling produced a binary missing imports it needed,
-    // with no diagnostic anywhere — fail loudly instead.
-    if (ls.cstimport_count >= 1024) {
-        reader.print_str("caustic-ld: more than 1024 distinct extern imports; raise the cstimport table\n");
-        io.exit(1);
-    }
     let is *i64 as dp = cast(*i64, ls.cstimport_dll_ptrs);
     let is *i32 as dl = cast(*i32, ls.cstimport_dll_lens);
     let is *i64 as sp = cast(*i64, ls.cstimport_sym_ptrs);
@@ -270,11 +280,16 @@ fn add_cstimport(ls as *LinkerState, dll as *u8, dll_len as i32, sym as *u8, sym
         }
         i = i + 1;
     }
+    if (ls.cstimport_count >= ls.cstimport_cap) { _cstimport_grow(ls); }
     let is i32 as idx = ls.cstimport_count;
-    dp[idx] = cast(i64, dll);
-    dl[idx] = dll_len;
-    sp[idx] = cast(i64, sym);
-    sl[idx] = sym_len;
+    let is *i64 as gdp = cast(*i64, ls.cstimport_dll_ptrs);
+    let is *i32 as gdl = cast(*i32, ls.cstimport_dll_lens);
+    let is *i64 as gsp = cast(*i64, ls.cstimport_sym_ptrs);
+    let is *i32 as gsl = cast(*i32, ls.cstimport_sym_lens);
+    gdp[idx] = cast(i64, dll);
+    gdl[idx] = dll_len;
+    gsp[idx] = cast(i64, sym);
+    gsl[idx] = sym_len;
     ls.cstimport_count = ls.cstimport_count + 1;
 }
 
@@ -716,7 +731,34 @@ fn emit_start_stub(buf as *reader.ByteBuffer) as void {
 // Phase 1: Merge sections
 // ============================================================
 
+fn _csec_grow_one(old as *u8, used as i64, new_size as i64) as *u8 {
+    let is *u8 as nb = om.opt_alloc(new_size);
+    let is i64 as i with mut = 0;
+    while (i < used) { nb[i] = old[i]; i = i + 1; }
+    om.opt_free(old);
+    return nb;
+}
+
+// Double every csec_* array. Callers re-read ls.csec_* after
+// csec_find_or_add, so nothing holds a pointer into the old ones.
+fn _csec_grow(ls as *LinkerState) as void {
+    let is i64 as n = cast(i64, ls.csec_count);
+    let is i64 as nc = cast(i64, ls.csec_cap) * 2;
+    let is i64 as bsz = sizeof(reader.ByteBuffer);
+    ls.csec_bufs = _csec_grow_one(ls.csec_bufs, n * bsz, nc * bsz);
+    ls.csec_names = _csec_grow_one(ls.csec_names, n * 8, nc * 8);
+    ls.csec_name_lens = _csec_grow_one(ls.csec_name_lens, n * 4, nc * 4);
+    ls.csec_sizes = _csec_grow_one(ls.csec_sizes, n * 8, nc * 8);
+    ls.csec_vaddrs = _csec_grow_one(ls.csec_vaddrs, n * 8, nc * 8);
+    ls.csec_execs = _csec_grow_one(ls.csec_execs, n * 4, nc * 4);
+    ls.csec_cap = cast(i32, nc);
+}
+
 // Find or create a merged custom section by name. Returns index into ls.csec_* arrays.
+//
+// The arrays grow. They were fixed at 32, and the 33rd distinct section name
+// got index 0 back — so its contents were appended to whichever custom section
+// came first, and its own name never reached the output.
 fn csec_find_or_add(ls as *LinkerState, name as *u8, name_len as i32) as i32 {
     let is *i64 as names = cast(*i64, ls.csec_names);
     let is *i32 as nlens = cast(*i32, ls.csec_name_lens);
@@ -728,10 +770,12 @@ fn csec_find_or_add(ls as *LinkerState, name as *u8, name_len as i32) as i32 {
         i = i + 1;
     }
     // Create new
-    if (ls.csec_count >= 32) { return 0; }
+    if (ls.csec_count >= ls.csec_cap) { _csec_grow(ls); }
     let is i32 as idx = ls.csec_count;
-    names[idx] = cast(i64, name);
-    nlens[idx] = name_len;
+    let is *i64 as gnames = cast(*i64, ls.csec_names);
+    let is *i32 as gnlens = cast(*i32, ls.csec_name_lens);
+    gnames[idx] = cast(i64, name);
+    gnlens[idx] = name_len;
     // Allocate a ByteBuffer for this section
     let is *reader.ByteBuffer as bufs = cast(*reader.ByteBuffer, ls.csec_bufs);
     bufs[idx] = reader.buf_init(4096);

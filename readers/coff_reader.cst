@@ -232,20 +232,25 @@ fn read_coff_obj(path as *u8, obj as *reader.ObjFile) as i32 {
     let is i32 as sn_data with mut = 0;
     let is i32 as sn_rdata with mut = 0;
     let is i32 as sn_bss with mut = 0;
-    let is [256]i32 as sn_to_secidx;          // COFF sec# → SECIDX_*
-    let is i32 as sni with mut = 0;
-    while (sni < 256) { sn_to_secidx[sni] = 99; sni = sni + 1; }
+    // COFF sec# → SECIDX_*, and the custom-section arrays, sized by the
+    // object's own section count. The map was a [256] on the stack written at
+    // the section number with no bound, so a 256th section wrote past it; the
+    // custom sections stopped at 32 and dropped the rest in silence.
+    let is i64 as ncap = num_sections + 1;
+    let is *i32 as sn_to_secidx = cast(*i32, om.opt_alloc(ncap * 4));
+    let is i64 as sni with mut = 0;
+    while (sni < ncap) { sn_to_secidx[sni] = 99; sni = sni + 1; }
 
     // Pass 1: identify .text/.data/.rdata/.bss and assign secidx mapping.
     // Custom sections get SECIDX 5..(4+csec_count).
-    obj.csec_data = om.opt_alloc(32 * sizeof(reader.ObjSection));
-    obj.csec_names = om.opt_alloc(32 * 8);
-    obj.csec_name_lens = om.opt_alloc(32 * 4);
-    obj.csec_indices = om.opt_alloc(32 * 4);
-    obj.csec_offsets = om.opt_alloc(32 * 8);
+    obj.csec_data = om.opt_alloc(ncap * sizeof(reader.ObjSection));
+    obj.csec_names = om.opt_alloc(ncap * 8);
+    obj.csec_name_lens = om.opt_alloc(ncap * 4);
+    obj.csec_indices = om.opt_alloc(ncap * 4);
+    obj.csec_offsets = om.opt_alloc(ncap * 8);
     // Parallel to the ELF reader's SHF_EXECINSTR bits; merge_sections reads
     // this for every object, so leaving it null segfaults there.
-    obj.csec_execs = om.opt_alloc(32 * 4);
+    obj.csec_execs = om.opt_alloc(ncap * 4);
 
     let is i32 as si with mut = 0;
     while (si < cast(i32, num_sections)) {
@@ -288,7 +293,7 @@ fn read_coff_obj(path as *u8, obj as *reader.ObjFile) as i32 {
             else { obj.bss_size = raw_size; }
         } else {
             // Custom section.
-            if (obj.csec_count < 32) {
+            if (cast(i64, obj.csec_count) < ncap) {
                 let is i32 as ci = obj.csec_count;
                 let is *reader.ObjSection as csarr = cast(*reader.ObjSection, obj.csec_data);
                 let is *reader.ObjSection as cs = cast(*reader.ObjSection,
@@ -343,7 +348,7 @@ fn read_coff_obj(path as *u8, obj as *reader.ObjFile) as i32 {
         let is i32 as num_aux = cast(i32, reader.read_u8(data, sent + 17));
 
         let is i32 as obj_sec with mut = 99;       // undefined
-        if (scnum > 0 && scnum < 256) {
+        if (scnum > 0 && cast(i64, scnum) < ncap) {
             obj_sec = sn_to_secidx[scnum];
         }
         let is i32 as binding with mut = 0;        // STB_LOCAL
