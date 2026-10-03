@@ -953,7 +953,13 @@ fn write_cse_combine_ape(pe_path as *u8, elf_path as *u8, elf_a64_path as *u8,
         reader.buf_pad_to(&out, cst_off);   // == align8(elf_off+elf_size); recorded in mini-header
         reader.buf_append(&out, cst.data, cst_size);
     }
-    return cse_write_buf_to_file(&out, output_path);
+    let is i32 as werr = cse_write_buf_to_file(&out, output_path);
+    if (werr != 0) { return werr; }
+    // The polyglot runs as itself on Linux (the shell stub at its head picks the
+    // ELF body), so it leaves the linker executable like any ELF it writes.
+    // Without this the first `./prog.cse.exe` said "permission denied".
+    io.make_executable(output_path);
+    return 0;
 }
 
 // === CST_ v4 — multi-architecture container ==========================
