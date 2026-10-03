@@ -21,7 +21,7 @@
 //   0x00 4  magic "CST_"        (43 53 54 5f)
 //   0x04 2  version = 3         (u16 LE)
 //   0x06 1  arch                (1 = x86_64)
-//   0x07 1  flags               (bit0 = dynamic stack growth)
+//   0x07 1  flags               (bit0 = dynamic stack growth, bit1 = opens its own window)
 //   0x08 8  entry_point         (u64 LE, absolute vaddr = ls.entry_vaddr)
 //   0x10 8  base_addr           (u64 LE)
 //   0x18 4  seg_count           (u32 LE)
@@ -434,8 +434,12 @@ fn cse_emit_cst_v2(out as *reader.ByteBuffer, ls as *linker.LinkerState) as i32 
     // probes (+ __caustic_stkgrow) for recursive/indirect programs; this tells
     // the loader to reserve the ceiling (0x2C) but commit only the initial
     // window, letting the probes grow it via SYS_COMMIT. 0 = strict eager stack.
+    // bit1 = the program opens its own window (--window): a desktop starting
+    // it runs it as is; anything else it runs in a terminal. Not read by the
+    // loader.
     let is i32 as cse_flags with mut = 0;
     if (tgt.cse_stack_dynamic_get() == 1) { cse_flags = cse_flags | 1; }
+    if (tgt.cse_window_get() == 1) { cse_flags = cse_flags | 2; }
     reader.buf_emit8(out, cast(i32, cse_flags));   // flags
     reader.buf_emit64_le(out, ls.entry_vaddr);     // entry_point
     reader.buf_emit64_le(out, ls.base_addr);       // base_addr
