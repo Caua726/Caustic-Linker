@@ -23,8 +23,12 @@ use "../../src/codegen/target.cst" as tgt;
 //   .data   → reader.SECIDX_DATA   (2)
 //   .rdata  → reader.SECIDX_RODATA (3)
 //   .bss    → reader.SECIDX_BSS    (4)
-//   <custom>→ 5..32
-//   undef   → 99
+//   <custom>→ 5..99
+//   undef   → 0
+// 0, not 99: the custom-section id space runs up to 99 (the ELF writer uses
+// it too), so 99 cannot double as "undefined" without a symbol in the last
+// custom section looking undefined. 0 is what the ELF reader uses, so the
+// linker's "is it defined" tests work for both formats.
 // ============================================================
 
 fn read_file(path as *u8, out_size as *i64) as *u8 {
@@ -239,7 +243,7 @@ fn read_coff_obj(path as *u8, obj as *reader.ObjFile) as i32 {
     let is i64 as ncap = num_sections + 1;
     let is *i32 as sn_to_secidx = cast(*i32, om.opt_alloc(ncap * 4));
     let is i64 as sni with mut = 0;
-    while (sni < ncap) { sn_to_secidx[sni] = 99; sni = sni + 1; }
+    while (sni < ncap) { sn_to_secidx[sni] = 0; sni = sni + 1; }
 
     // Pass 1: identify .text/.data/.rdata/.bss and assign secidx mapping.
     // Custom sections get SECIDX 5..(4+csec_count).
@@ -327,7 +331,7 @@ fn read_coff_obj(path as *u8, obj as *reader.ObjFile) as i32 {
     // The linker's build_symtab() skips obj.syms[0] as "null entry" (ELF
     // convention). COFF has no null entry, so insert a placeholder at
     // index 0 here; real symbols start at index 1.
-    reader.sym_add(obj, cast(*u8, 0), 0, 99, 0, 0, 0);
+    reader.sym_add(obj, cast(*u8, 0), 0, 0, 0, 0, 0);
 
     // sym_map[coff sym index] = obj sym index (real index, accounts for
     // the +1 shift due to the inserted null placeholder above).
@@ -347,7 +351,7 @@ fn read_coff_obj(path as *u8, obj as *reader.ObjFile) as i32 {
         let is i32 as sclass = cast(i32, reader.read_u8(data, sent + 16));
         let is i32 as num_aux = cast(i32, reader.read_u8(data, sent + 17));
 
-        let is i32 as obj_sec with mut = 99;       // undefined
+        let is i32 as obj_sec with mut = 0;        // undefined
         if (scnum > 0 && cast(i64, scnum) < ncap) {
             obj_sec = sn_to_secidx[scnum];
         }
