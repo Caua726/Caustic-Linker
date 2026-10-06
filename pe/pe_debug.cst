@@ -597,14 +597,18 @@ fn _start_subsec(out as *reader.ByteBuffer, kind as i32) as i64 {
 }
 
 fn _patch_subsec_size(out as *reader.ByteBuffer, size_off as i64) as void {
+    // CodeView subsections are 4-byte aligned AND the Length field counts the
+    // padding (`alignTo(DataSize, alignOf(Container))` in LLVM's builder), so
+    // pad first and write the size afterwards. Writing the unpadded size made
+    // the reader advance into the pad bytes and read a garbage next header —
+    // `llvm-pdbutil dump --modules` reported "stream too short".
+    while ((out.len & 3) != 0) { reader.buf_emit8(out, 0); }
     let is i64 as size = out.len - size_off - 4;
     let is *u8 as p = out.data;
     p[size_off]     = cast(u8, size & 255);
     p[size_off + 1] = cast(u8, (size >> 8) & 255);
     p[size_off + 2] = cast(u8, (size >> 16) & 255);
     p[size_off + 3] = cast(u8, (size >> 24) & 255);
-    // CodeView subsections are 4-byte aligned.
-    while ((out.len & 3) != 0) { reader.buf_emit8(out, 0); }
 }
 
 // Emit a CodeView symbol record: u16 len, u16 kind, payload, then 0xF1 pad.
@@ -901,7 +905,6 @@ fn build_module_stream(ls as *linker.LinkerState,
 
         fi = fi + 1;
     }
-    // End of raw symbol records — anything from here is C13 line info.
     *out_sym_size = cast(i32, out_buf.len);
 
     // 3b. LINES subsection per function. .cstdebug uses obj-text frame
@@ -940,9 +943,15 @@ fn build_module_stream(ls as *linker.LinkerState,
         reader.buf_emit16_le(out_buf, 1);             // segCon = .text
         reader.buf_emit16_le(out_buf, 0);             // flags
         reader.buf_emit32_le(out_buf, fn_size);       // cbCon
-        reader.buf_emit32_le(out_buf, 0);             // offFile (always 0 — single file)
+        // offFile: offset of the file name in this module's STRINGTABLE
+        // subsection (1 — past the leading empty string). 0 named the empty
+        // string, so the debugger could not attribute the lines to a source.
+        reader.buf_emit32_le(out_buf, 1);             // offFile
         reader.buf_emit32_le(out_buf, cast(i64, line_count));
-        reader.buf_emit32_le(out_buf, cast(i64, 12 + line_count * 8));    // cbBlock
+        // BlockSize counts the block header (NumLines + BlockSize = 8) plus the
+        // line entries — LLVM's `LineBlockFragmentHeader + NumLines *
+        // sizeof(LineNumberEntry)`. 12 was 4 too many.
+        reader.buf_emit32_le(out_buf, cast(i64, 8 + line_count * 8));    // cbBlock
         let is i32 as lj with mut = 0;
         while (lj < line_count) {
             let is i64 as src_idx = cast(i64, line_idx[lj]);
@@ -979,10 +988,12 @@ fn build_module_stream(ls as *linker.LinkerState,
     reader.buf_emit16_le(out_buf, 0);                 // pad
     _patch_subsec_size(out_buf, chk_sub);
 
-    // Capture C13 byte size before the trailing GlobalRefsSize sentinel.
     *out_c13_size = cast(i32, out_buf.len - cast(i64, *out_sym_size));
 
-    // GlobalRefsSize sentinel — 0 means no global refs follow.
+    // GlobalRefsSize — 0 means no global refs follow. LLVM's reloadSerialize
+    // reads this 4-byte count from the module stream AFTER the C13 line info
+    // and then reads that many bytes of global refs, so it must be present and
+    // must sit outside C13Bytes (which ends here).
     reader.buf_emit32_le(out_buf, 0);
 
     return cast(i32, out_buf.len);
