@@ -168,10 +168,11 @@ fn _sort_fn_idx(idx as *i32, vaddrs as *i64, n as i32) as void {
 // Build the DWARF v4 line-number program. `src`/`src_len` is the source path;
 // the loc table is (vaddr, line) already sorted by vaddr; funcs give the
 // per-function sequences.
-fn _build_line(out as *reader.ByteBuffer, src as *u8, src_len as i32,
-               loc_v as *i64, loc_l as *i64, nloc as i32,
-               fn_start as *i64, fn_end as *i64, nfn as i32,
-               pend_v as *i64, npend as i32) as void {
+fn _build_line(out as *reader.ByteBuffer,
+               loc_v as *i64, loc_l as *i64, loc_f as *i32, nloc as i32,
+               fn_start as *i64, fn_end as *i64, fn_file as *i32, nfn as i32,
+               pend_v as *i64, npend as i32,
+               srcs as *i64, src_lens as *i32, nsrc as i32) as void {
     reader.buf_emit32_le(out, 0);                 // unit_length (patched)
     let is i64 as len_off = out.len - 4;
     reader.buf_emit16_le(out, 4);                 // version
@@ -191,13 +192,20 @@ fn _build_line(out as *reader.ByteBuffer, src as *u8, src_len as i32,
     while (si < 12) { reader.buf_emit8(out, cast(i32, sl[si])); si = si + 1; }
     // include_directories: empty
     reader.buf_emit8(out, 0);
-    // file_names: one entry — name, dir=0, mtime=0, length=0; then terminator
-    let is i32 as fi with mut = 0;
-    while (fi < src_len) { reader.buf_emit8(out, cast(i32, src[fi])); fi = fi + 1; }
-    reader.buf_emit8(out, 0);
-    _uleb(out, 0);
-    _uleb(out, 0);
-    _uleb(out, 0);
+    // file_names: one entry per source (dir=0, mtime=0, length=0), then the
+    // terminator. A single-file link has nsrc == 1.
+    let is i32 as sfi with mut = 0;
+    while (sfi < nsrc) {
+        let is *u8 as sp = cast(*u8, srcs[sfi]);
+        let is i32 as slen = src_lens[sfi];
+        let is i32 as fi with mut = 0;
+        while (fi < slen) { reader.buf_emit8(out, cast(i32, sp[fi])); fi = fi + 1; }
+        reader.buf_emit8(out, 0);
+        _uleb(out, 0);
+        _uleb(out, 0);
+        _uleb(out, 0);
+        sfi = sfi + 1;
+    }
     reader.buf_emit8(out, 0);
     _patch_u32(out, hlen_off, out.len - hlen_off - 4);
 
@@ -211,6 +219,12 @@ fn _build_line(out as *reader.ByteBuffer, src as *u8, src_len as i32,
         _uleb(out, 9);
         reader.buf_emit8(out, cast(i32, DW_LNE_set_address));
         reader.buf_emit64_le(out, start);
+        // Each sequence belongs to one source file; the state machine resets
+        // at end_sequence, so the file is set once, up front.
+        if (fn_file[f] != 0) {
+            reader.buf_emit8(out, 4);                          // DW_LNS_set_file
+            _uleb(out, cast(i64, fn_file[f] + 1));
+        }
         let is i64 as cur_addr with mut = start;
         let is i64 as cur_line with mut = 1;
         let is i32 as li with mut = 0;
@@ -239,6 +253,15 @@ fn _build_line(out as *reader.ByteBuffer, src as *u8, src_len as i32,
                 reader.buf_emit8(out, cast(i32, DW_LNS_copy));
             }
             li = li + 1;
+        }
+        // Extend the sequence to the function's end, so its last row covers a
+        // real range — a single-line function has one row and would otherwise
+        // end where it starts, leaving the debugger with no line for the
+        // function's address.
+        if (cur_addr < end) {
+            reader.buf_emit8(out, cast(i32, DW_LNS_advance_pc));
+            _uleb(out, end - cur_addr);
+            cur_addr = end;
         }
         // DW_LNE_end_sequence
         reader.buf_emit8(out, 0);
@@ -825,7 +848,7 @@ fn _emit_info_body(out as *reader.ByteBuffer, producer_off as i64, name_off as i
         reader.buf_emit64_le(out, _fn_low[f]);
         reader.buf_emit64_le(out, _fn_end[f] - _fn_low[f]);
         // external: flag_present, no bytes
-        _uleb(out, 1);                            // decl_file
+        _uleb(out, cast(i64, _fn_file[f] + 1));   // decl_file
         _uleb(out, 1);                            // decl_line
         _emit_frame_base(out);
         // Locals belonging to this function.
@@ -947,6 +970,10 @@ let is *i32 as _fn_nargs with mut;
 let is *i32 as _fn_rkind with mut;
 let is *i32 as _fn_rextra with mut;
 let is *i64 as _fn_pend with mut;
+let is *i32 as _fn_file with mut;     // per-function line-table file index
+let is i32 as _nsrc with mut = 0;     // number of source files in the line table
+let is *i64 as _srcs with mut;        // per-file source path pointers
+let is *i32 as _src_lens with mut;    // per-file source path lengths
 // Per-local .debug_loc offset (parameters only; -1 for locals without one).
 let is *i32 as _l_locoff with mut;
 let is reader.ByteBuffer as _dbg_loc with mut;
@@ -1376,16 +1403,24 @@ fn build_debug(ls as *linker.LinkerState,
                out_abbrev as *reader.ByteBuffer, out_str as *reader.ByteBuffer) as i32 {
     if (ls.obj_count == 0) { return 0; }
 
-    // 1. Merge .cstdebug from every object into (vaddr, line) arrays.
+    // 1. Merge .cstdebug from every object into (vaddr, line, file) arrays.
     let is i32 as cap with mut = 4096;
     let is *i64 as loc_v with mut = cast(*i64, om.opt_alloc(cast(i64, cap) * 8));
     let is *i64 as loc_l with mut = cast(*i64, om.opt_alloc(cast(i64, cap) * 8));
+    let is *i32 as loc_f with mut = cast(*i32, om.opt_alloc(cast(i64, cap) * 4));
     let is i32 as nloc with mut = 0;
     let is i32 as pcap with mut = 256;
     let is *i64 as pend_v with mut = cast(*i64, om.opt_alloc(cast(i64, pcap) * 8));
     let is i32 as npend with mut = 0;
     let is *u8 as src with mut = cast(*u8, 0);
     let is i32 as src_len with mut = 0;
+    // One file-table entry per object that carries a source path, so a
+    // multi-file link keeps every source in the line table (each object's
+    // rows name their own file).
+    let is i32 as scap with mut = 16;
+    let is *i64 as srcs with mut = cast(*i64, om.opt_alloc(cast(i64, scap) * 8));
+    let is *i32 as src_lens with mut = cast(*i32, om.opt_alloc(cast(i64, scap) * 4));
+    let is i32 as nsrc with mut = 0;
 
     let is i32 as oi with mut = 0;
     while (oi < ls.obj_count) {
@@ -1395,9 +1430,24 @@ fn build_debug(ls as *linker.LinkerState,
             let is *u8 as db = ds.data;
             if (_read_u32_at(db, 0) == dbgproto.CSTDEBUG_MAGIC) {
                 let is i64 as sl = _read_u32_at(db, 8);
-                if (src_len == 0 && sl > 0) {
-                    src = cast(*u8, cast(i64, db) + 12);
-                    src_len = cast(i32, sl);
+                let is i32 as cur_file with mut = 0;
+                if (sl > 0) {
+                    if (src_len == 0) {
+                        src = cast(*u8, cast(i64, db) + 12);
+                        src_len = cast(i32, sl);
+                    }
+                    if (nsrc >= scap) {
+                        let is i32 as nc = scap * 2;
+                        let is *i64 as np = cast(*i64, om.opt_alloc(cast(i64, nc) * 8));
+                        let is *i32 as nl2 = cast(*i32, om.opt_alloc(cast(i64, nc) * 4));
+                        let is i32 as ci with mut = 0;
+                        while (ci < nsrc) { np[ci] = srcs[ci]; nl2[ci] = src_lens[ci]; ci = ci + 1; }
+                        srcs = np; src_lens = nl2; scap = nc;
+                    }
+                    cur_file = nsrc;
+                    srcs[nsrc] = cast(i64, cast(*u8, cast(i64, db) + 12));
+                    src_lens[nsrc] = cast(i32, sl);
+                    nsrc = nsrc + 1;
                 }
                 let is i64 as lo with mut = 12 + sl;
                 while ((lo & 3) != 0) { lo = lo + 1; }
@@ -1410,12 +1460,14 @@ fn build_debug(ls as *linker.LinkerState,
                         let is i32 as nc = cap * 2;
                         let is *i64 as nv = cast(*i64, om.opt_alloc(cast(i64, nc) * 8));
                         let is *i64 as nl2 = cast(*i64, om.opt_alloc(cast(i64, nc) * 8));
+                        let is *i32 as nf2 = cast(*i32, om.opt_alloc(cast(i64, nc) * 4));
                         let is i32 as ci with mut = 0;
-                        while (ci < nloc) { nv[ci] = loc_v[ci]; nl2[ci] = loc_l[ci]; ci = ci + 1; }
-                        loc_v = nv; loc_l = nl2; cap = nc;
+                        while (ci < nloc) { nv[ci] = loc_v[ci]; nl2[ci] = loc_l[ci]; nf2[ci] = loc_f[ci]; ci = ci + 1; }
+                        loc_v = nv; loc_l = nl2; loc_f = nf2; cap = nc;
                     }
                     loc_v[nloc] = tbase + _read_u32_at(db, base + k * 8);
                     loc_l[nloc] = _read_u32_at(db, base + k * 8 + 4);
+                    loc_f[nloc] = cur_file;
                     nloc = nloc + 1;
                     k = k + 1;
                 }
@@ -1505,6 +1557,26 @@ fn build_debug(ls as *linker.LinkerState,
         f = f + 1;
     }
 
+    // The file each function belongs to: the file of the first line entry in
+    // its range (a multi-file link puts each object's functions in its own).
+    let is *i32 as fn_file = cast(*i32, om.opt_alloc(cast(i64, nfn + 1) * 4));
+    f = 0;
+    while (f < nfn) {
+        let is i32 as ff with mut = 0;
+        let is i32 as jj with mut = 0;
+        let is i32 as done with mut = 0;
+        while (jj < nloc && done == 0) {
+            if (loc_v[jj] >= fn_start[f] && loc_v[jj] < fn_end[f]) { ff = loc_f[jj]; done = 1; }
+            else { jj = jj + 1; }
+        }
+        fn_file[f] = ff;
+        f = f + 1;
+    }
+    _fn_file = fn_file;
+    _nsrc = nsrc;
+    _srcs = srcs;
+    _src_lens = src_lens;
+
     // Collect struct/local metadata (fills the module tables and the composite
     // set), then build .debug_str with every name the DIEs reference.
     _collect_structs(ls);
@@ -1555,7 +1627,8 @@ fn build_debug(ls as *linker.LinkerState,
     _loc_base = ls.text_vaddr;
     _build_loc(&_dbg_loc);
 
-    _build_line(out_line, src, src_len, loc_v, loc_l, nloc, fn_low, fn_end, nfn, pend_v, npend);
+    _build_line(out_line, loc_v, loc_l, loc_f, nloc, fn_low, fn_end, fn_file, nfn, pend_v, npend,
+                _srcs, _src_lens, _nsrc);
     _build_abbrev(out_abbrev);
 
     _base_dieoff = cast(*i64, om.opt_alloc(13 * 8));
