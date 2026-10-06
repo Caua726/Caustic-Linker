@@ -119,7 +119,16 @@ fn cse_write_buf_to_file(out as *reader.ByteBuffer, output_path as *u8) as i32 {
         io._write_fd(io.STDERR, "\n", 1);
         return 1;
     }
-    io._write_fd(fd, out.data, out.len);
+    // Same rule as the ELF writer: the whole image or an error. A truncated
+    // CST_ image used to be reported as a successful link.
+    let is i64 as w = io.write_all_fd(fd, out.data, out.len);
+    if (w != out.len) {
+        io._write_fd(io.STDERR, "caustic-ld: short write: ", 25);
+        io._write_fd(io.STDERR, output_path, cast(i64, reader.strlen(output_path)));
+        io._write_fd(io.STDERR, "\n", 1);
+        io._close_fd(fd);
+        return 1;
+    }
     io._close_fd(fd);
     return 0;
 }

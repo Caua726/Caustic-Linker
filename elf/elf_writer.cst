@@ -109,7 +109,19 @@ fn write_buf_to_file(out as *reader.ByteBuffer, output_path as *u8) as i32 {
         reader.print_str("\n");
         return 1;
     }
-    io._write_fd(fd, out.data, out.len);
+    // The whole image, or nothing: a partial write (ENOSPC, a signal, a pipe)
+    // used to be ignored and the link reported success over a truncated ELF.
+    // A short image is not executable, so it is an error, and the file is
+    // closed and left non-executable rather than being a half-written
+    // "success".
+    let is i64 as w = io.write_all_fd(fd, out.data, out.len);
+    if (w != out.len) {
+        reader.print_str("error: short write: ");
+        reader.print_str(output_path);
+        reader.print_str("\n");
+        io._close_fd(fd);
+        return 1;
+    }
     io._close_fd(fd);
     io.make_executable(output_path);
     return 0;

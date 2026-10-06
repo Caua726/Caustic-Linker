@@ -1103,14 +1103,21 @@ fn build_symtab(ls as *LinkerState) as i32 {
         i = i + 1;
     }
 
-    // Check for unresolved symbols
+    // Check for unresolved symbols. In a static link with no library expected
+    // (needed_count == 0) and not building a shared object, an unresolved
+    // global is an ERROR: this used to print "warning: undefined symbol: ..."
+    // and write the image anyway, leaving the relocation pending — an external
+    // link target that looked like a successful build and then faulted at run
+    // time. A .so/.dll legitimately has undefined symbols, and so does a link
+    // that named a library to provide them, so both are still allowed.
     let is i32 as gi with mut = 0;
     while (gi < gsyms.count) {
         let is *GlobalSym as g = gsym_get(gsyms, gi);
-        if (g.defined == 0 && ls.needed_count == 0) {
-            reader.print_str("warning: undefined symbol: ");
+        if (g.defined == 0 && ls.needed_count == 0 && ls.is_shared == 0) {
+            reader.print_str("error: undefined symbol: ");
             io._write_fd(io.STDERR, g.name, cast(i64, g.name_len));
             reader.print_str("\n");
+            errors = errors + 1;
         }
         gi = gi + 1;
     }

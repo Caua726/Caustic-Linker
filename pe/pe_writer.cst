@@ -1003,7 +1003,17 @@ fn write_pe_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
         io._write_fd(io.STDERR, "caustic-ld: cannot create output\n", 33);
         return 1;
     }
-    io._write_fd(fd, out.data, out.len);
+    // The whole image or an error. A short write is not a PE, and the PDB
+    // written below describes an image that is not on disk — so this returns
+    // before either, leaving no executable behind.
+    let is i64 as w = io.write_all_fd(fd, out.data, out.len);
+    if (w != out.len) {
+        io._write_fd(io.STDERR, "caustic-ld: short write: ", 25);
+        io._write_fd(io.STDERR, output_path, cast(i64, _strlen_i32(output_path)));
+        io._write_fd(io.STDERR, "\n", 1);
+        io._close_fd(fd);
+        return 1;
+    }
     io._close_fd(fd);
     io.make_executable(output_path);
 

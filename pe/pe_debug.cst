@@ -1069,11 +1069,20 @@ fn _emit_lf_numeric(out_buf as *reader.ByteBuffer, value as i32) as i32 {
 // next_index is bumped for each record. Returns the number of structs
 // emitted (0 if no .cststructs section is present).
 //
+// struct_indices is allocated here and grown by doubling as structs are
+// emitted; the buffer is handed back through out_struct_indices. It used to be
+// a fixed 256-entry array the caller allocated, and the store below had no
+// bound at all — a PE built from more than 256 structs wrote past the end of
+// the heap block, corrupting the linker's own memory while still producing an
+// .exe that ran.
+//
 // Each struct emission is: first the LF_FIELDLIST (so its index is known
 // before the LF_STRUCTURE that references it), then the LF_STRUCTURE.
 fn build_struct_records(ls as *linker.LinkerState,
                         out_buf as *reader.ByteBuffer, next_index as *i32,
-                        struct_indices as *i32) as i32 {
+                        out_struct_indices as **i32) as i32 {
+    let is i32 as si_cap with mut = 256;
+    let is *i32 as struct_indices with mut = cast(*i32, om.opt_alloc(cast(i64, si_cap) * 4));
     let is i32 as oi with mut = 0;
     let is i32 as total_structs with mut = 0;
     while (oi < ls.obj_count) {
@@ -1191,6 +1200,15 @@ fn build_struct_records(ls as *linker.LinkerState,
                 bufd[st_start]     = cast(u8, st_rec_len & 255);
                 bufd[st_start + 1] = cast(u8, (st_rec_len >> 8) & 255);
 
+                if (total_structs >= si_cap) {
+                    let is i32 as nc = si_cap * 2;
+                    let is *i32 as nb = cast(*i32, om.opt_alloc(cast(i64, nc) * 4));
+                    let is i32 as ci with mut = 0;
+                    while (ci < total_structs) { nb[ci] = struct_indices[ci]; ci = ci + 1; }
+                    om.opt_free(cast(*u8, struct_indices));
+                    struct_indices = nb;
+                    si_cap = nc;
+                }
                 struct_indices[total_structs] = *next_index;
                 *next_index = *next_index + 1;
                 total_structs = total_structs + 1;
@@ -1198,6 +1216,7 @@ fn build_struct_records(ls as *linker.LinkerState,
         }
         oi = oi + 1;
     }
+    *out_struct_indices = struct_indices;
     return total_structs;
 }
 
@@ -1428,9 +1447,10 @@ fn build_tpi_body(ls as *linker.LinkerState, out_buf as *reader.ByteBuffer,
     let is i32 as next_index with mut = TYPE_INDEX_BEGIN_LINKER;
 
     // Emit struct records first so function signatures can reference them
-    // by index. struct_indices[struct_idx] → CV TPI index.
-    let is *i32 as struct_indices = cast(*i32, om.opt_alloc(256 * 4));
-    let is i32 as num_structs = build_struct_records(ls, out_buf, &next_index, struct_indices);
+    // by index. struct_indices[struct_idx] → CV TPI index. build_struct_records
+    // allocates it and hands it back, growing as needed for the real count.
+    let is *i32 as struct_indices with mut = cast(*i32, 0);
+    let is i32 as num_structs = build_struct_records(ls, out_buf, &next_index, &struct_indices);
 
     let is *i32 as arg_cv = cast(*i32, om.opt_alloc(64 * 4));   // up to 16 args
     let is *i32 as pairs  = cast(*i32, om.opt_alloc(64 * 4));   // (kind,extra)*17
