@@ -28,10 +28,14 @@ let is i32 as DW_TAG_pointer_type with imut = 15;
 let is i32 as DW_TAG_structure_type with imut = 19;
 let is i32 as DW_TAG_member with imut = 13;
 let is i32 as DW_TAG_array_type with imut = 1;
+let is i32 as DW_TAG_enumeration_type with imut = 4;
+let is i32 as DW_TAG_enumerator with imut = 40;
+let is i32 as DW_TAG_union_type with imut = 23;
 
 let is i32 as DW_AT_name with imut = 3;
 let is i32 as DW_AT_location with imut = 2;
 let is i32 as DW_AT_byte_size with imut = 11;
+let is i32 as DW_AT_const_value with imut = 28;
 let is i32 as DW_AT_stmt_list with imut = 16;
 let is i32 as DW_AT_low_pc with imut = 17;
 let is i32 as DW_AT_high_pc with imut = 18;
@@ -281,6 +285,29 @@ let is *i64 as _s_noff with mut;      // struct name offset in .debug_str
 let is *i64 as _f_noff with mut;      // field name offset in .debug_str
 let is *i64 as _s_dieoff with mut;    // struct DIE offset in .debug_info
 
+// Enums, flattened: per enum a slice of the variant arrays. A plain enum is a
+// DW_TAG_enumeration_type; a tagged union is a structure holding the tag (an
+// enumeration) and the payload (a union of the variants that carry data).
+let is i32 as _ne with mut = 0;
+let is *i64 as _e_name_ptr with mut;
+let is *i32 as _e_name_len with mut;
+let is *i32 as _e_size with mut;
+let is *i32 as _e_poff with mut;
+let is *i32 as _e_vstart with mut;
+let is *i32 as _e_nv with mut;
+let is i32 as _nvl with mut = 0;
+let is *i64 as _v_name_ptr with mut;
+let is *i32 as _v_name_len with mut;
+let is *i32 as _v_disc with mut;
+let is *i32 as _v_kind with mut;
+let is *i32 as _v_extra with mut;
+let is *i64 as _e_noff with mut;      // enum name offset in .debug_str
+let is *i64 as _v_noff with mut;      // variant name offset in .debug_str
+let is *i64 as _e_dieoff with mut;    // enum/structure DIE offset
+let is *i64 as _e_tagoff with mut;    // tag enumeration DIE offset (tagged union)
+let is *i64 as _e_unioff with mut;    // payload union DIE offset (tagged union)
+let is *i32 as _eobj_base with mut;   // per-object enum index base
+
 // Locals (params + lets), flattened across functions.
 let is i32 as _nl with mut = 0;
 let is i32 as _lcap with mut = 0;
@@ -422,6 +449,27 @@ fn _build_abbrev(b as *reader.ByteBuffer) as void {
     _abbrev_attr(b, DW_AT_type, DW_FORM_ref4);
     _abbrev_attr(b, DW_AT_location, DW_FORM_sec_offset);
     _uleb(b, 0); _uleb(b, 0);
+    // 16: enumeration_type, children
+    _uleb(b, 16);
+    _uleb(b, cast(i64, DW_TAG_enumeration_type));
+    reader.buf_emit8(b, DW_CHILDREN_yes);
+    _abbrev_attr(b, DW_AT_name, DW_FORM_strp);
+    _abbrev_attr(b, DW_AT_byte_size, DW_FORM_udata);
+    _uleb(b, 0); _uleb(b, 0);
+    // 17: enumerator
+    _uleb(b, 17);
+    _uleb(b, cast(i64, DW_TAG_enumerator));
+    reader.buf_emit8(b, DW_CHILDREN_no);
+    _abbrev_attr(b, DW_AT_name, DW_FORM_strp);
+    _abbrev_attr(b, DW_AT_const_value, DW_FORM_udata);
+    _uleb(b, 0); _uleb(b, 0);
+    // 18: union_type, children
+    _uleb(b, 18);
+    _uleb(b, cast(i64, DW_TAG_union_type));
+    reader.buf_emit8(b, DW_CHILDREN_yes);
+    _abbrev_attr(b, DW_AT_name, DW_FORM_strp);
+    _abbrev_attr(b, DW_AT_byte_size, DW_FORM_udata);
+    _uleb(b, 0); _uleb(b, 0);
     // terminator
     _uleb(b, 0);
 }
@@ -537,6 +585,7 @@ fn _comp_find(kind as i32, extra as i32) as i32 {
 // Collect the composites a (kind, extra) type pair needs, recursively.
 fn _comp_collect(kind as i32, extra as i32) as void {
     if (kind == 300) { return; }                        // struct: handled by _s_dieoff
+    if (kind == 600) { return; }                        // enum: handled by _e_dieoff
     if (kind >= 0 && kind <= 12) { return; }            // base
     if (kind == 13) { _comp_add(13, 0); return; }
     if (kind == 400) { _comp_add(400, 0); return; }
@@ -553,6 +602,10 @@ fn _has_type(kind as i32, extra as i32) as i32 {
         if (extra >= 0 && extra < _ns) { return 1; }
         return 0;
     }
+    if (kind == 600) {
+        if (extra >= 0 && extra < _ne) { return 1; }
+        return 0;
+    }
     if (kind == 0) { return 0; }
     if (_comp_find(kind, extra) >= 0) { return 1; }
     return 0;
@@ -564,6 +617,10 @@ fn _type_off(kind as i32, extra as i32, assign as i32) as i64 {
     if (kind >= 0 && kind <= 12) { return _base_dieoff[kind]; }
     if (kind == 300) {
         if (extra >= 0 && extra < _ns) { return _s_dieoff[extra]; }
+        return 0;
+    }
+    if (kind == 600) {
+        if (extra >= 0 && extra < _ne) { return _e_dieoff[extra]; }
         return 0;
     }
     let is i32 as ci = _comp_find(kind, extra);
@@ -679,6 +736,77 @@ fn _emit_info_body(out as *reader.ByteBuffer, producer_off as i64, name_off as i
         }
         _uleb(out, 0);                            // end struct children
         si = si + 1;
+    }
+
+    // Enum types. A plain enum is one enumeration_type; a tagged union is a
+    // structure whose tag is an enumeration and whose payload is a union of
+    // the variants that carry data.
+    let is i32 as ei with mut = 0;
+    while (ei < _ne) {
+        let is i32 as vs = _e_vstart[ei];
+        let is i32 as ve = _e_vstart[ei] + _e_nv[ei];
+        if (_e_poff[ei] == 0) {
+            if (assign == 0) { _e_dieoff[ei] = out.len; }
+            _uleb(out, 16);
+            reader.buf_emit32_le(out, _e_noff[ei]);
+            _uleb(out, cast(i64, _e_size[ei]));
+            let is i32 as vi with mut = vs;
+            while (vi < ve) {
+                _uleb(out, 17);
+                reader.buf_emit32_le(out, _v_noff[vi]);
+                _uleb(out, cast(i64, _v_disc[vi]));
+                vi = vi + 1;
+            }
+            _uleb(out, 0);
+        } else {
+            if (assign == 0) { _e_tagoff[ei] = out.len; }
+            _uleb(out, 16);
+            reader.buf_emit32_le(out, _e_noff[ei]);
+            _uleb(out, 8);                            // the tag is an i64
+            let is i32 as vi with mut = vs;
+            while (vi < ve) {
+                _uleb(out, 17);
+                reader.buf_emit32_le(out, _v_noff[vi]);
+                _uleb(out, cast(i64, _v_disc[vi]));
+                vi = vi + 1;
+            }
+            _uleb(out, 0);
+            if (assign == 0) { _e_unioff[ei] = out.len; }
+            _uleb(out, 18);
+            reader.buf_emit32_le(out, _e_noff[ei]);
+            _uleb(out, cast(i64, _e_size[ei] - _e_poff[ei]));
+            vi = vs;
+            while (vi < ve) {
+                if (cast(i64, _v_kind[vi]) != 0) {
+                    if (_has_type(_v_kind[vi], _v_extra[vi]) == 1) {
+                        _uleb(out, 9);
+                        reader.buf_emit32_le(out, _v_noff[vi]);
+                        reader.buf_emit32_le(out, _type_off(_v_kind[vi], _v_extra[vi], assign));
+                        _uleb(out, 0);
+                    } else {
+                        _uleb(out, 14);
+                        reader.buf_emit32_le(out, _v_noff[vi]);
+                        _uleb(out, 0);
+                    }
+                }
+                vi = vi + 1;
+            }
+            _uleb(out, 0);
+            if (assign == 0) { _e_dieoff[ei] = out.len; }
+            _uleb(out, 8);
+            reader.buf_emit32_le(out, _e_noff[ei]);
+            _uleb(out, cast(i64, _e_size[ei]));
+            _uleb(out, 9);
+            reader.buf_emit32_le(out, _strp_off("tag", 3));
+            reader.buf_emit32_le(out, cast(i64, _e_tagoff[ei]));
+            _uleb(out, 0);
+            _uleb(out, 9);
+            reader.buf_emit32_le(out, _strp_off("payload", 7));
+            reader.buf_emit32_le(out, cast(i64, _e_unioff[ei]));
+            _uleb(out, cast(i64, _e_poff[ei]));
+            _uleb(out, 0);
+        }
+        ei = ei + 1;
     }
 
     // Composite types.
@@ -881,6 +1009,21 @@ fn _find_cststructs(obj as *reader.ObjFile) as *reader.ObjSection {
     return cast(*reader.ObjSection, 0);
 }
 
+fn _find_cstenums(obj as *reader.ObjFile) as *reader.ObjSection {
+    let is *i64 as names = cast(*i64, obj.csec_names);
+    let is *i32 as nlens = cast(*i32, obj.csec_name_lens);
+    let is i32 as i with mut = 0;
+    while (i < obj.csec_count) {
+        let is *u8 as nm = cast(*u8, names[i]);
+        if (nlens[i] == 9 && reader.streq(nm, 9, ".cstenums", 9) == 1) {
+            return cast(*reader.ObjSection,
+                cast(i64, obj.csec_data) + cast(i64, i) * sizeof(reader.ObjSection));
+        }
+        i = i + 1;
+    }
+    return cast(*reader.ObjSection, 0);
+}
+
 fn _find_cstlocals(obj as *reader.ObjFile) as *reader.ObjSection {
     let is *i64 as names = cast(*i64, obj.csec_names);
     let is *i32 as nlens = cast(*i32, obj.csec_name_lens);
@@ -1031,6 +1174,103 @@ fn _collect_structs(ls as *linker.LinkerState) as void {
         oi = oi + 1;
     }
     _nfl = fidx;
+}
+
+// Collect .cstenums across the objects, flattened. Struct indices in a
+// variant payload are rebased with the STRUCT base and enum indices with the
+// ENUM base, because the two tables are numbered per object independently.
+fn _collect_enums(ls as *linker.LinkerState) as void {
+    let is i32 as total with mut = 0;
+    let is i32 as vtotal with mut = 0;
+    _eobj_base = cast(*i32, om.opt_alloc(cast(i64, ls.obj_count + 1) * 4));
+    let is i32 as oi with mut = 0;
+    while (oi < ls.obj_count) {
+        _eobj_base[oi] = total;
+        let is *reader.ObjFile as o = linker.get_obj(ls, oi);
+        let is *reader.ObjSection as ss = _find_cstenums(o);
+        if (cast(i64, ss) != 0 && ss.size > 0) {
+            let is *u8 as p = ss.data;
+            let is i64 as off with mut = 0;
+            while (off + 16 <= ss.size) {
+                let is i64 as nl = _read_u32_at(p, off); off = off + 4;
+                off = off + nl + 8;                      // name, size, payload_offset
+                let is i64 as nv = _read_u32_at(p, off); off = off + 4;
+                total = total + 1;
+                vtotal = vtotal + cast(i32, nv);
+                let is i64 as vi with mut = 0;
+                while (vi < nv && off + 4 <= ss.size) {
+                    let is i64 as vnl = _read_u32_at(p, off); off = off + 4;
+                    off = off + vnl + 12;
+                    vi = vi + 1;
+                }
+            }
+        }
+        oi = oi + 1;
+    }
+    _eobj_base[ls.obj_count] = total;
+    _ne = total;
+    _nvl = 0;
+    _e_name_ptr = cast(*i64, om.opt_alloc(cast(i64, total + 1) * 8));
+    _e_name_len = cast(*i32, om.opt_alloc(cast(i64, total + 1) * 4));
+    _e_size = cast(*i32, om.opt_alloc(cast(i64, total + 1) * 4));
+    _e_poff = cast(*i32, om.opt_alloc(cast(i64, total + 1) * 4));
+    _e_vstart = cast(*i32, om.opt_alloc(cast(i64, total + 1) * 4));
+    _e_nv = cast(*i32, om.opt_alloc(cast(i64, total + 1) * 4));
+    _e_noff = cast(*i64, om.opt_alloc(cast(i64, total + 1) * 8));
+    _e_dieoff = cast(*i64, om.opt_alloc(cast(i64, total + 1) * 8));
+    _e_tagoff = cast(*i64, om.opt_alloc(cast(i64, total + 1) * 8));
+    _e_unioff = cast(*i64, om.opt_alloc(cast(i64, total + 1) * 8));
+    _v_name_ptr = cast(*i64, om.opt_alloc(cast(i64, vtotal + 1) * 8));
+    _v_name_len = cast(*i32, om.opt_alloc(cast(i64, vtotal + 1) * 4));
+    _v_disc = cast(*i32, om.opt_alloc(cast(i64, vtotal + 1) * 4));
+    _v_kind = cast(*i32, om.opt_alloc(cast(i64, vtotal + 1) * 4));
+    _v_extra = cast(*i32, om.opt_alloc(cast(i64, vtotal + 1) * 4));
+    _v_noff = cast(*i64, om.opt_alloc(cast(i64, vtotal + 1) * 8));
+
+    let is i32 as idx with mut = 0;
+    let is i32 as vidx with mut = 0;
+    oi = 0;
+    while (oi < ls.obj_count) {
+        let is i32 as sbase = _obj_base[oi];
+        let is i32 as ebase = _eobj_base[oi];
+        let is *reader.ObjFile as o = linker.get_obj(ls, oi);
+        let is *reader.ObjSection as ss = _find_cstenums(o);
+        if (cast(i64, ss) != 0 && ss.size > 0) {
+            let is *u8 as p = ss.data;
+            let is i64 as off with mut = 0;
+            while (off + 16 <= ss.size) {
+                let is i64 as nl = _read_u32_at(p, off); off = off + 4;
+                _e_name_ptr[idx] = cast(i64, cast(*u8, cast(i64, p) + off));
+                _e_name_len[idx] = cast(i32, nl);
+                off = off + nl;
+                _e_size[idx] = cast(i32, _read_u32_at(p, off)); off = off + 4;
+                _e_poff[idx] = cast(i32, _read_u32_at(p, off)); off = off + 4;
+                let is i64 as nv = _read_u32_at(p, off); off = off + 4;
+                _e_vstart[idx] = vidx;
+                _e_nv[idx] = cast(i32, nv);
+                let is i64 as vi with mut = 0;
+                while (vi < nv && off + 4 <= ss.size) {
+                    let is i64 as vnl = _read_u32_at(p, off); off = off + 4;
+                    _v_name_ptr[vidx] = cast(i64, cast(*u8, cast(i64, p) + off));
+                    _v_name_len[vidx] = cast(i32, vnl);
+                    off = off + vnl;
+                    _v_disc[vidx] = cast(i32, _read_u32_at(p, off)); off = off + 4;
+                    let is i32 as vk = cast(i32, _read_u32_at(p, off)); off = off + 4;
+                    let is i32 as vex with mut = cast(i32, _read_u32_at(p, off)); off = off + 4;
+                    if (vk == 300 || vk == 500) { vex = vex + sbase; }
+                    if (vk == 600) { vex = vex + ebase; }
+                    _v_kind[vidx] = vk;
+                    _v_extra[vidx] = vex;
+                    _comp_collect(vk, vex);
+                    vidx = vidx + 1;
+                    vi = vi + 1;
+                }
+                idx = idx + 1;
+            }
+        }
+        oi = oi + 1;
+    }
+    _nvl = vidx;
 }
 
 fn _collect_locals(ls as *linker.LinkerState) as void {
@@ -1268,6 +1508,7 @@ fn build_debug(ls as *linker.LinkerState,
     // Collect struct/local metadata (fills the module tables and the composite
     // set), then build .debug_str with every name the DIEs reference.
     _collect_structs(ls);
+    _collect_enums(ls);
     _collect_locals(ls);
 
     _strtab = out_str;
@@ -1282,6 +1523,12 @@ fn build_debug(ls as *linker.LinkerState,
     i2 = 0;
     while (i2 < _nfl) { _f_noff[i2] = _strp_off(cast(*u8, _f_name_ptr[i2]), _f_name_len[i2]); i2 = i2 + 1; }
     i2 = 0;
+    while (i2 < _ne) { _e_noff[i2] = _strp_off(cast(*u8, _e_name_ptr[i2]), _e_name_len[i2]); i2 = i2 + 1; }
+    i2 = 0;
+    while (i2 < _nvl) { _v_noff[i2] = _strp_off(cast(*u8, _v_name_ptr[i2]), _v_name_len[i2]); i2 = i2 + 1; }
+    i2 = 0;
+    _strp_off("tag", 3);
+    _strp_off("payload", 7);
     while (i2 < _nl) { _l_noff[i2] = _strp_off(cast(*u8, _l_name_ptr[i2]), _l_name_len[i2]); i2 = i2 + 1; }
     i2 = 0;
     while (i2 < _nfn) {
