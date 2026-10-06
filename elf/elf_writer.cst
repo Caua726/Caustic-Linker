@@ -18,6 +18,7 @@ let is i32 as ET_DYN with imut = 3;
 let is i32 as PT_LOAD with imut = 1;
 let is i32 as PT_DYNAMIC with imut = 2;
 let is i32 as PT_INTERP with imut = 3;
+let is i32 as PT_GNU_EH_FRAME with imut = 1685382480;   // 0x6474e550
 let is i32 as PF_X with imut = 1;
 let is i32 as PF_W with imut = 2;
 let is i32 as PF_R with imut = 4;
@@ -161,6 +162,7 @@ struct StaticMeta {
     shn_debug_abbrev as i32;
     shn_debug_str as i32;
     shn_eh_frame as i32;
+    shn_eh_frame_hdr as i32;
 }
 
 fn build_static_metadata(meta as *StaticMeta, ls as *linker.LinkerState,
@@ -207,6 +209,8 @@ fn build_static_metadata(meta as *StaticMeta, ls as *linker.LinkerState,
     }
     meta.shn_eh_frame = cast(i32, meta.shstrtab.len);
     reader.buf_append(&meta.shstrtab, ".eh_frame", 10);
+    meta.shn_eh_frame_hdr = cast(i32, meta.shstrtab.len);
+    reader.buf_append(&meta.shstrtab, ".eh_frame_hdr", 14);
 
     // Null symtab entry
     reader.buf_emit8(&meta.out_strtab, 0);
@@ -336,17 +340,30 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
 
     // .eh_frame (SysV unwind) lives in the R+X segment too — it is read-only
     // but loadable, so the runtime unwinder can find it. Built after the exec
-    // custom sections and before .rodata.
+    // custom sections and before .rodata. .eh_frame_hdr follows it: the
+    // binary-search table (PT_GNU_EH_FRAME) a runtime unwinder uses to map a pc
+    // to its FDE without scanning .eh_frame.
     let is reader.ByteBuffer as eh_buf = reader.buf_init(1024);
+    let is reader.ByteBuffer as hdr_buf = reader.buf_init(256);
     let is i32 as have_eh with mut = 0;
     let is i64 as eh_foff with mut = 0;
+    let is i64 as hdr_foff with mut = 0;
     if (ehf.cfi_present(ls) == 1) {
-        ehf.build_eh_frame(ls, &eh_buf);
+        let is i32 as nf = ehf.cfi_fde_count(ls);
+        let is *i64 as fde_pc = cast(*i64, om.opt_alloc(cast(i64, nf + 1) * 8));
+        let is *i64 as fde_off = cast(*i64, om.opt_alloc(cast(i64, nf + 1) * 8));
+        let is i32 as got = ehf.build_eh_frame(ls, &eh_buf, fde_pc, fde_off);
         if (eh_buf.len > 0) {
             have_eh = 1;
+            num_phdrs = num_phdrs + 1;              // PT_GNU_EH_FRAME
             rx_file_size = (rx_file_size + 7) & (0 - 8);
             eh_foff = text_file_off + rx_file_size;
             rx_file_size = rx_file_size + eh_buf.len;
+            let is i64 as after = (rx_file_size + 3) & (0 - 4);
+            hdr_foff = text_file_off + after;
+            ehf.build_eh_frame_hdr(&hdr_buf, fde_pc, fde_off, got,
+                                   ls.base_addr + eh_foff, ls.base_addr + hdr_foff);
+            rx_file_size = after + hdr_buf.len;
         }
     }
 
@@ -398,7 +415,7 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
                               dbg_abbrev.len, dbg_str.len);
         num_shdrs = 8;
         if (have_debug == 1) { num_shdrs = 12; }
-        if (have_eh == 1) { num_shdrs = num_shdrs + 1; }
+        if (have_eh == 1) { num_shdrs = num_shdrs + 2; }   // .eh_frame + .eh_frame_hdr
         shstrndx = 7;
         shdr_file_off = meta.shdr_file_off;
     }
@@ -416,6 +433,10 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     if (rw_mem_size > 0) {
         write_phdr(&out, PT_LOAD, PF_R + PF_W, rw_file_off, ls.rodata_vaddr,
                    ls.rodata_vaddr, rw_file_sz, rw_mem_size, PAGE_SIZE);
+    }
+    if (have_eh == 1) {
+        write_phdr(&out, PT_GNU_EH_FRAME, PF_R, hdr_foff, ls.base_addr + hdr_foff,
+                   ls.base_addr + hdr_foff, hdr_buf.len, hdr_buf.len, 4);
     }
 
     // Pad + sections
@@ -440,6 +461,8 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     if (have_eh == 1) {
         reader.buf_pad_to(&out, eh_foff);
         reader.buf_append(&out, eh_buf.data, eh_buf.len);
+        reader.buf_pad_to(&out, hdr_foff);
+        reader.buf_append(&out, hdr_buf.data, hdr_buf.len);
     }
 
     // R+W segment: .rodata + .data
@@ -510,6 +533,8 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
         if (have_eh == 1) {
             write_shdr(&out, cast(i64, meta.shn_eh_frame), 1, 2,
                        ls.base_addr + eh_foff, eh_foff, eh_buf.len, 0, 0, 8, 0);
+            write_shdr(&out, cast(i64, meta.shn_eh_frame_hdr), 1, 2,
+                       ls.base_addr + hdr_foff, hdr_foff, hdr_buf.len, 0, 0, 4, 0);
         }
     }
 
