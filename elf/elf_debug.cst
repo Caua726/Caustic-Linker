@@ -929,6 +929,7 @@ fn _build_loc(out as *reader.ByteBuffer) as void {
                 if (tk >= 0 && tk <= 13) { scalar = 1; }
                 if (tk >= 100 && tk <= 113) { scalar = 1; }
                 if (tk == 400 || tk == 500) { scalar = 1; }
+                if (tk == 600) { scalar = 1; }   // enum: register-passed like a scalar
                 if (scalar == 1 && (k + shift) < 6) { reg = _arg_reg(k + shift); }
                 let is i32 as voff = _l_voff[li];
                 // A location list needs a prologue-end marker to split the
