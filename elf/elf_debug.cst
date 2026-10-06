@@ -166,7 +166,8 @@ fn _sort_fn_idx(idx as *i32, vaddrs as *i64, n as i32) as void {
 // per-function sequences.
 fn _build_line(out as *reader.ByteBuffer, src as *u8, src_len as i32,
                loc_v as *i64, loc_l as *i64, nloc as i32,
-               fn_start as *i64, fn_end as *i64, nfn as i32) as void {
+               fn_start as *i64, fn_end as *i64, nfn as i32,
+               pend_v as *i64, npend as i32) as void {
     reader.buf_emit32_le(out, 0);                 // unit_length (patched)
     let is i64 as len_off = out.len - 4;
     reader.buf_emit16_le(out, 4);                 // version
@@ -222,6 +223,14 @@ fn _build_line(out as *reader.ByteBuffer, src as *u8, src_len as i32,
                     reader.buf_emit8(out, cast(i32, DW_LNS_advance_line));
                     _sleb(out, l - cur_line);
                     cur_line = l;
+                }
+                // Flag the row at the prologue end so a debugger skips to it
+                // when setting a breakpoint on the function (parameters are in
+                // their stack slots past this point).
+                let is i32 as pj with mut = 0;
+                while (pj < npend) {
+                    if (pend_v[pj] == a) { reader.buf_emit8(out, 10); pj = npend; }  // DW_LNS_set_prologue_end
+                    else { pj = pj + 1; }
                 }
                 reader.buf_emit8(out, cast(i32, DW_LNS_copy));
             }
@@ -404,6 +413,14 @@ fn _build_abbrev(b as *reader.ByteBuffer) as void {
     reader.buf_emit8(b, DW_CHILDREN_no);
     _abbrev_attr(b, DW_AT_name, DW_FORM_strp);
     _abbrev_attr(b, DW_AT_data_member_location, DW_FORM_udata);
+    _uleb(b, 0); _uleb(b, 0);
+    // 15: formal_parameter with a location list (DW_FORM_sec_offset)
+    _uleb(b, 15);
+    _uleb(b, cast(i64, DW_TAG_formal_parameter));
+    reader.buf_emit8(b, DW_CHILDREN_no);
+    _abbrev_attr(b, DW_AT_name, DW_FORM_strp);
+    _abbrev_attr(b, DW_AT_type, DW_FORM_ref4);
+    _abbrev_attr(b, DW_AT_location, DW_FORM_sec_offset);
     _uleb(b, 0); _uleb(b, 0);
     // terminator
     _uleb(b, 0);
@@ -688,7 +705,12 @@ fn _emit_info_body(out as *reader.ByteBuffer, producer_off as i64, name_off as i
         let is i32 as k with mut = 0;
         while (li < _nl) {
             if (_l_fn_len[li] == g.name_len && _name_eq(cast(*u8, _l_fn_ptr[li]), _l_fn_len[li], g.name, g.name_len) == 1) {
-                if (_has_type(_l_kind[li], _l_extra[li]) == 1) {
+                if (k < _fn_nargs[f] && _l_locoff[li] >= 0 && _has_type(_l_kind[li], _l_extra[li]) == 1) {
+                    _uleb(out, 15);                    // DW_TAG_formal_parameter, location list
+                    reader.buf_emit32_le(out, _l_noff[li]);
+                    reader.buf_emit32_le(out, _type_off(_l_kind[li], _l_extra[li], assign));
+                    reader.buf_emit32_le(out, cast(i64, _l_locoff[li]));   // into .debug_loc
+                } else if (_has_type(_l_kind[li], _l_extra[li]) == 1) {
                     if (k < _fn_nargs[f]) { _uleb(out, 3); }   // DW_TAG_formal_parameter
                     else { _uleb(out, 4); }                    // DW_TAG_variable
                     reader.buf_emit32_le(out, _l_noff[li]);
@@ -712,7 +734,81 @@ fn _emit_info_body(out as *reader.ByteBuffer, producer_off as i64, name_off as i
     _patch_u32(out, len_off, out.len - len_off - 4);
 }
 
-// Function ranges (sorted by vaddr) + per-function name offsets in .debug_str.
+// SysV integer argument register (DWARF number) for parameter index i, or -1.
+fn _arg_reg(i as i32) as i32 {
+    if (i == 0) { return 5; }   // rdi
+    if (i == 1) { return 4; }   // rsi
+    if (i == 2) { return 1; }   // rdx
+    if (i == 3) { return 2; }   // rcx
+    if (i == 4) { return 8; }   // r8
+    if (i == 5) { return 9; }   // r9
+    return 0 - 1;
+}
+
+// Build .debug_loc: one location list per parameter. Before the prologue ends
+// a scalar parameter still lives in its incoming register; after, in its stack
+// slot. A debugger that stops at the function entry (past the frame setup but
+// before the spill) then reads the register instead of an uninitialized slot.
+// Only scalar, non-sret, register-passed parameters get the register range;
+// anything else keeps the plain frame slot.
+fn _build_loc(out as *reader.ByteBuffer) as void {
+    let is i32 as f with mut = 0;
+    while (f < _nfn) {
+        let is *linker.GlobalSym as g = linker.gsym_get(_gsyms, _fn_idx[f]);
+        let is i32 as nargs = _fn_nargs[f];
+        let is i32 as shift with mut = 0;
+        if (_fn_rkind[f] == 300 && _fn_rextra[f] >= 0 && _fn_rextra[f] < _ns) {
+            if (_s_size[_fn_rextra[f]] > 8) { shift = 1; }
+        }
+        let is i64 as pstart = _fn_start[f];
+        let is i64 as pend = _fn_pend[f];
+        let is i64 as fend = _fn_end[f];
+        let is i32 as li with mut = 0;
+        let is i32 as k with mut = 0;
+        while (li < _nl && k < nargs) {
+            if (_l_fn_len[li] == g.name_len
+                && _name_eq(cast(*u8, _l_fn_ptr[li]), _l_fn_len[li], g.name, g.name_len) == 1) {
+                let is i32 as tk = _l_kind[li];
+                let is i32 as reg with mut = 0 - 1;
+                // Scalar, pointer, fn-pointer and pointer-to-struct parameters
+                // are their value in the register until the spill. A struct or
+                // array passed by value is a pointer to a copy, so its register
+                // does not describe the local.
+                let is i32 as scalar with mut = 0;
+                if (tk >= 0 && tk <= 13) { scalar = 1; }
+                if (tk >= 100 && tk <= 113) { scalar = 1; }
+                if (tk == 400 || tk == 500) { scalar = 1; }
+                if (scalar == 1 && (k + shift) < 6) { reg = _arg_reg(k + shift); }
+                let is i32 as voff = _l_voff[li];
+                // A location list needs a prologue-end marker to split the
+                // register and frame-slot ranges; without one (a single-line
+                // function) fall back to the plain frame slot.
+                if (reg >= 0 && pend > pstart && pend < fend) {
+                    _l_locoff[li] = cast(i32, out.len);
+                    reader.buf_emit64_le(out, pstart - _loc_base);   // [entry, prologue end)
+                    reader.buf_emit64_le(out, pend - _loc_base);
+                    reader.buf_emit16_le(out, 1);             // expr length
+                    reader.buf_emit8(out, 80 + reg);          // DW_OP_reg0 + reg
+                    reader.buf_emit64_le(out, pend - _loc_base);  // [prologue end, end)
+                    reader.buf_emit64_le(out, fend - _loc_base);
+                    let is i64 as neg = 0 - cast(i64, voff);
+                    reader.buf_emit16_le(out, 1 + _sleb_len(neg));
+                    reader.buf_emit8(out, DW_OP_fbreg);
+                    _sleb(out, neg);
+                    reader.buf_emit64_le(out, 0);             // terminator
+                    reader.buf_emit64_le(out, 0);
+                } else {
+                    _l_locoff[li] = 0 - 1;
+                }
+                k = k + 1;
+            }
+            li = li + 1;
+        }
+        f = f + 1;
+    }
+}
+
+
 let is i32 as _nfn with mut = 0;
 let is *i32 as _fn_idx with mut;
 let is *i64 as _fn_start with mut;
@@ -720,6 +816,14 @@ let is *i64 as _fn_end with mut;
 let is *i64 as _fn_low with mut;
 let is *i64 as _fn_noff with mut;
 let is *i32 as _fn_nargs with mut;
+let is *i32 as _fn_rkind with mut;
+let is *i32 as _fn_rextra with mut;
+let is *i64 as _fn_pend with mut;
+// Per-local .debug_loc offset (parameters only; -1 for locals without one).
+let is *i32 as _l_locoff with mut;
+let is reader.ByteBuffer as _dbg_loc with mut;
+// The CU's DW_AT_low_pc — the base a location list's addresses are relative to.
+let is i64 as _loc_base with mut = 0;
 let is *linker.GlobalSymTab as _gsyms with mut;
 
 // The strtab is built before both passes; _strp_off looks an already-written
@@ -808,7 +912,8 @@ fn _find_cstsigs(obj as *reader.ObjFile) as *reader.ObjSection {
 }
 
 // Argument count of a function's .cstsigs record, or -1 if absent.
-fn _fn_num_args(ls as *linker.LinkerState, name as *u8, name_len as i32) as i32 {
+fn _fn_num_args(ls as *linker.LinkerState, name as *u8, name_len as i32,
+                out_rkind as *i32, out_rextra as *i32) as i32 {
     let is i32 as oi with mut = 0;
     while (oi < ls.obj_count) {
         let is *reader.ObjFile as o = linker.get_obj(ls, oi);
@@ -824,6 +929,9 @@ fn _fn_num_args(ls as *linker.LinkerState, name as *u8, name_len as i32) as i32 
                 if (rend > ss.size) { off = ss.size; continue; }
                 if (cast(i32, nl) == name_len
                     && _name_eq(cast(*u8, cast(i64, p) + off + 4), cast(i32, nl), name, name_len) == 1) {
+                    let is i64 as poff = off + 4 + nl + 4;
+                    *out_rkind = cast(i32, _read_u32_at(p, poff));
+                    *out_rextra = cast(i32, _read_u32_at(p, poff + 4));
                     return cast(i32, na);
                 }
                 off = rend;
@@ -831,6 +939,8 @@ fn _fn_num_args(ls as *linker.LinkerState, name as *u8, name_len as i32) as i32 
         }
         oi = oi + 1;
     }
+    *out_rkind = 0 - 1;
+    *out_rextra = 0;
     return 0 - 1;
 }
 
@@ -1017,6 +1127,8 @@ fn debug_present(ls as *linker.LinkerState) as i32 {
     return 0;
 }
 
+fn debug_loc() as *reader.ByteBuffer { return &_dbg_loc; }
+
 // Build all four DWARF sections into the caller's buffers. Returns 1 if
 // anything was emitted.
 fn build_debug(ls as *linker.LinkerState,
@@ -1029,6 +1141,9 @@ fn build_debug(ls as *linker.LinkerState,
     let is *i64 as loc_v with mut = cast(*i64, om.opt_alloc(cast(i64, cap) * 8));
     let is *i64 as loc_l with mut = cast(*i64, om.opt_alloc(cast(i64, cap) * 8));
     let is i32 as nloc with mut = 0;
+    let is i32 as pcap with mut = 256;
+    let is *i64 as pend_v with mut = cast(*i64, om.opt_alloc(cast(i64, pcap) * 8));
+    let is i32 as npend with mut = 0;
     let is *u8 as src with mut = cast(*u8, 0);
     let is i32 as src_len with mut = 0;
 
@@ -1063,6 +1178,24 @@ fn build_debug(ls as *linker.LinkerState,
                     loc_l[nloc] = _read_u32_at(db, base + k * 8 + 4);
                     nloc = nloc + 1;
                     k = k + 1;
+                }
+                // Prologue-end offsets, appended after the loc table.
+                let is i64 as pbase = base + n * 8;
+                if (pbase + 4 <= ds.size) {
+                    let is i64 as np = _read_u32_at(db, pbase);
+                    let is i64 as k2 with mut = 0;
+                    while (k2 < np && pbase + 4 + k2 * 4 + 4 <= ds.size) {
+                        if (npend >= pcap) {
+                            let is i32 as nc = pcap * 2;
+                            let is *i64 as nv = cast(*i64, om.opt_alloc(cast(i64, nc) * 8));
+                            let is i32 as ci with mut = 0;
+                            while (ci < npend) { nv[ci] = pend_v[ci]; ci = ci + 1; }
+                            pend_v = nv; pcap = nc;
+                        }
+                        pend_v[npend] = tbase + _read_u32_at(db, pbase + 4 + k2 * 4);
+                        npend = npend + 1;
+                        k2 = k2 + 1;
+                    }
                 }
             }
         }
@@ -1101,16 +1234,10 @@ fn build_debug(ls as *linker.LinkerState,
         let is i64 as e with mut = ls.text_vaddr + ls.text_size;
         if (f + 1 < nfn) { e = fn_start[f + 1]; }
         fn_end[f] = e;
-        // The line table's first entry for the function (after the prologue);
-        // the DIE's low_pc uses it so a breakpoint lands where the frame — and
-        // so the parameters — are already set up. locs are vaddr-sorted.
-        let is i64 as lo with mut = fn_start[f];
-        let is i32 as j with mut = 0;
-        while (j < nloc) {
-            if (loc_v[j] >= fn_start[f] && loc_v[j] < fn_end[f]) { lo = loc_v[j]; j = nloc; }
-            else { j = j + 1; }
-        }
-        fn_low[f] = lo;
+        // The DIE's low_pc is the function's start; the prologue is skipped by
+        // the line table's DW_LNS_set_prologue_end flag (see _build_line), so
+        // the parameters are valid where a breakpoint on the function lands.
+        fn_low[f] = fn_start[f];
         f = f + 1;
     }
 
@@ -1122,6 +1249,21 @@ fn build_debug(ls as *linker.LinkerState,
     _nfn = nfn;
     _fn_noff = cast(*i64, om.opt_alloc(cast(i64, nfn + 1) * 8));
     _fn_nargs = cast(*i32, om.opt_alloc(cast(i64, nfn + 1) * 4));
+    _fn_rkind = cast(*i32, om.opt_alloc(cast(i64, nfn + 1) * 4));
+    _fn_rextra = cast(*i32, om.opt_alloc(cast(i64, nfn + 1) * 4));
+    _fn_pend = cast(*i64, om.opt_alloc(cast(i64, nfn + 1) * 8));
+    // Prologue end per function: the marker inside [start, end), else the end.
+    f = 0;
+    while (f < nfn) {
+        let is i64 as p with mut = fn_end[f];
+        let is i32 as j with mut = 0;
+        while (j < npend) {
+            if (pend_v[j] >= fn_start[f] && pend_v[j] < fn_end[f]) { p = pend_v[j]; j = npend; }
+            else { j = j + 1; }
+        }
+        _fn_pend[f] = p;
+        f = f + 1;
+    }
 
     // Collect struct/local metadata (fills the module tables and the composite
     // set), then build .debug_str with every name the DIEs reference.
@@ -1145,15 +1287,28 @@ fn build_debug(ls as *linker.LinkerState,
     while (i2 < _nfn) {
         let is *linker.GlobalSym as g = linker.gsym_get(gsyms, fn_idx[i2]);
         _fn_noff[i2] = _strp_off(g.name, g.name_len);
-        _fn_nargs[i2] = _fn_num_args(ls, g.name, g.name_len);
+        let is i32 as rk with mut = 0;
+        let is i32 as rex with mut = 0;
+        _fn_nargs[i2] = _fn_num_args(ls, g.name, g.name_len, &rk, &rex);
         if (_fn_nargs[i2] < 0) { _fn_nargs[i2] = 0; }
+        _fn_rkind[i2] = rk;
+        _fn_rextra[i2] = rex;
         i2 = i2 + 1;
     }
 
     let is i64 as low_pc = ls.text_vaddr;
     let is i64 as high_pc = ls.text_vaddr + ls.text_size;
 
-    _build_line(out_line, src, src_len, loc_v, loc_l, nloc, fn_low, fn_end, nfn);
+    // Parameter location lists. Every local starts with -1 (no list); the
+    // builder overwrites the parameters' entries.
+    _l_locoff = cast(*i32, om.opt_alloc(cast(i64, _nl + 1) * 4));
+    i2 = 0;
+    while (i2 < _nl) { _l_locoff[i2] = 0 - 1; i2 = i2 + 1; }
+    _dbg_loc = reader.buf_init(512);
+    _loc_base = ls.text_vaddr;
+    _build_loc(&_dbg_loc);
+
+    _build_line(out_line, src, src_len, loc_v, loc_l, nloc, fn_low, fn_end, nfn, pend_v, npend);
     _build_abbrev(out_abbrev);
 
     _base_dieoff = cast(*i64, om.opt_alloc(13 * 8));

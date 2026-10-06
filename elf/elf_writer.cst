@@ -157,10 +157,12 @@ struct StaticMeta {
     dbg_info_off as i64;
     dbg_abbrev_off as i64;
     dbg_str_off as i64;
+    dbg_loc_off as i64;
     shn_debug_line as i32;
     shn_debug_info as i32;
     shn_debug_abbrev as i32;
     shn_debug_str as i32;
+    shn_debug_loc as i32;
     shn_eh_frame as i32;
     shn_eh_frame_hdr as i32;
 }
@@ -171,7 +173,7 @@ fn build_static_metadata(meta as *StaticMeta, ls as *linker.LinkerState,
                          text_file_off as i64, rx_file_size as i64,
                          csec_end_off as i64,
                          debug as i32, dbg_line_len as i64, dbg_info_len as i64,
-                         dbg_abbrev_len as i64, dbg_str_len as i64) as void {
+                         dbg_abbrev_len as i64, dbg_str_len as i64, dbg_loc_len as i64) as void {
     meta.num_local_syms = 2;
     meta.shstrtab = reader.buf_init(256);
     meta.out_symtab = reader.buf_init(4096);
@@ -206,6 +208,8 @@ fn build_static_metadata(meta as *StaticMeta, ls as *linker.LinkerState,
         reader.buf_append(&meta.shstrtab, ".debug_abbrev", 14);
         meta.shn_debug_str = cast(i32, meta.shstrtab.len);
         reader.buf_append(&meta.shstrtab, ".debug_str", 11);
+        meta.shn_debug_loc = cast(i32, meta.shstrtab.len);
+        reader.buf_append(&meta.shstrtab, ".debug_loc", 11);
     }
     meta.shn_eh_frame = cast(i32, meta.shstrtab.len);
     reader.buf_append(&meta.shstrtab, ".eh_frame", 10);
@@ -281,7 +285,8 @@ fn build_static_metadata(meta as *StaticMeta, ls as *linker.LinkerState,
         meta.dbg_info_off = meta.dbg_line_off + dbg_line_len;
         meta.dbg_abbrev_off = meta.dbg_info_off + dbg_info_len;
         meta.dbg_str_off = meta.dbg_abbrev_off + dbg_abbrev_len;
-        meta_off = meta.dbg_str_off + dbg_str_len;
+        meta.dbg_loc_off = meta.dbg_str_off + dbg_str_len;
+        meta_off = meta.dbg_loc_off + dbg_loc_len;
         if (meta_off % 8 != 0) { meta_off = meta_off + 8 - (meta_off % 8); }
     }
 
@@ -403,18 +408,20 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     let is reader.ByteBuffer as dbg_info = reader.buf_init(1024);
     let is reader.ByteBuffer as dbg_abbrev = reader.buf_init(256);
     let is reader.ByteBuffer as dbg_str = reader.buf_init(1024);
+    let is reader.ByteBuffer as dbg_loc with mut = reader.buf_init(512);
     let is i32 as have_debug with mut = 0;
     if (ls.do_strip == 0 && tgt.debug_get() == 1) {
         have_debug = edbg.build_debug(ls, &dbg_line, &dbg_info, &dbg_abbrev, &dbg_str);
+        dbg_loc = edbg.debug_loc();
     }
 
     if (ls.do_strip == 0) {
         build_static_metadata(&meta, ls, gsyms, has_data, data_file_off,
                               text_file_off, rx_file_size, csec_end_off,
                               have_debug, dbg_line.len, dbg_info.len,
-                              dbg_abbrev.len, dbg_str.len);
+                              dbg_abbrev.len, dbg_str.len, dbg_loc.len);
         num_shdrs = 8;
-        if (have_debug == 1) { num_shdrs = 12; }
+        if (have_debug == 1) { num_shdrs = 13; }   // + .debug_line/info/abbrev/str/loc
         if (have_eh == 1) { num_shdrs = num_shdrs + 2; }   // .eh_frame + .eh_frame_hdr
         shstrndx = 7;
         shdr_file_off = meta.shdr_file_off;
@@ -494,6 +501,7 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
             reader.buf_append(&out, dbg_info.data, dbg_info.len);
             reader.buf_append(&out, dbg_abbrev.data, dbg_abbrev.len);
             reader.buf_append(&out, dbg_str.data, dbg_str.len);
+            reader.buf_append(&out, dbg_loc.data, dbg_loc.len);
         }
         reader.buf_pad_to(&out, meta.symtab_file_off);
         reader.buf_append(&out, meta.out_symtab.data, meta.out_symtab.len);
@@ -529,6 +537,8 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
                        0, meta.dbg_abbrev_off, dbg_abbrev.len, 0, 0, 1, 0);
             write_shdr(&out, cast(i64, meta.shn_debug_str), 1, 0,
                        0, meta.dbg_str_off, dbg_str.len, 0, 0, 1, 0);
+            write_shdr(&out, cast(i64, meta.shn_debug_loc), 1, 0,
+                       0, meta.dbg_loc_off, dbg_loc.len, 0, 0, 1, 0);
         }
         if (have_eh == 1) {
             write_shdr(&out, cast(i64, meta.shn_eh_frame), 1, 2,
