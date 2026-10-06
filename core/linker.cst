@@ -787,6 +787,14 @@ fn csec_find_or_add(ls as *LinkerState, name as *u8, name_len as i32) as i32 {
     return idx;
 }
 
+// The .cst* custom sections are linker metadata, not program data.
+fn _is_meta_csec(name as *u8, name_len as i32) as i32 {
+    if (name_len >= 4 && name[0] == 46 && name[1] == 99 && name[2] == 115 && name[3] == 116) {
+        return 1;
+    }
+    return 0;
+}
+
 fn merge_sections(ls as *LinkerState) as void {
     // Dead-code elimination: prune unreachable .text functions from each .o before
     // they are concatenated. Relies on caustic-as emitting a relocation for EVERY
@@ -840,6 +848,10 @@ fn merge_sections(ls as *LinkerState) as void {
         while (ci < obj.csec_count) {
             let is *i64 as cnp = cast(*i64, cast(i64, obj.csec_names) + cast(i64, ci) * 8);
             let is *i32 as cnlp = cast(*i32, cast(i64, obj.csec_name_lens) + cast(i64, ci) * 4);
+            // The .cst* sections are linker metadata (imports, and the debug
+            // info the DWARF/PDB writers read straight from the object). They
+            // are not program data and must not be merged into the image.
+            if (_is_meta_csec(cast(*u8, *cnp), *cnlp) == 1) { ci = ci + 1; continue; }
             let is i32 as midx = csec_find_or_add(ls, cast(*u8, *cnp), *cnlp);
             let is *reader.ByteBuffer as mbufs = cast(*reader.ByteBuffer, ls.csec_bufs);
             obj_csec_offs[ci] = mbufs[midx].len;
