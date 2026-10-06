@@ -1125,12 +1125,15 @@ fn _pe_emit_pdb(ls as *linker.LinkerState, out as *reader.ByteBuffer, debug_guid
     let is reader.ByteBuffer as tpi_body_buf = reader.buf_init(1024);
     let is *i32 as proc_indices = cast(*i32, om.opt_alloc(1024 * 4));
     let is *i32 as tpi_struct_indices with mut = cast(*i32, 0);
+    let is *i32 as tpi_struct_fwd with mut = cast(*i32, 0);
+    let is *i32 as tpi_obj_base with mut = cast(*i32, 0);
     let is i32 as tpi_num_structs with mut = 0;
     let is *i64 as tpi_tm_keys with mut = cast(*i64, 0);
     let is *i32 as tpi_tm_vals with mut = cast(*i32, 0);
     let is i32 as tpi_tm_count with mut = 0;
     let is i32 as tpi_num_types = pedbg.build_tpi_body(ls, &tpi_body_buf, proc_indices,
         &tpi_struct_indices, &tpi_num_structs,
+        &tpi_struct_fwd, &tpi_obj_base,
         &tpi_tm_keys, &tpi_tm_vals, &tpi_tm_count);
 
     let is reader.ByteBuffer as module_buf = reader.buf_init(4096);
@@ -1142,7 +1145,8 @@ fn _pe_emit_pdb(ls as *linker.LinkerState, out as *reader.ByteBuffer, debug_guid
                         &mod_source, &mod_source_len,
                         &mod_sym_size, &mod_c13_size,
                         tpi_struct_indices, tpi_num_structs,
-                        tpi_tm_keys, tpi_tm_vals, tpi_tm_count);
+                        tpi_tm_keys, tpi_tm_vals, tpi_tm_count,
+                        tpi_obj_base);
 
     let is reader.ByteBuffer as ipi_body_buf = reader.buf_init(1024);
     let is i32 as ipi_num_records = pedbg.build_ipi_body(ls, &ipi_body_buf,
