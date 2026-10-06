@@ -645,6 +645,7 @@ fn _patch_sym_size(out as *reader.ByteBuffer, len_off as i64) as void {
 // out_sym_size / out_c13_size are filled in so the DBI ModuleInfo header
 // can describe the layout boundaries.
 fn build_module_stream(ls as *linker.LinkerState,
+                       obj_sel as i32,
                        text_section_va as i64,
                        out_buf as *reader.ByteBuffer,
                        out_source as **u8, out_source_len as *i32,
@@ -658,23 +659,23 @@ fn build_module_stream(ls as *linker.LinkerState,
     //    gsym vaddrs use. The first obj's source filename becomes the
     //    module's reported source (multi-source-file support would require
     //    a STRINGTABLE/FILECHKSMS rewrite — tracked separately).
+    // 1. Read .cstdebug from THIS object only — one module per object, so each
+    //    module carries just its own line table and its own source. Each entry
+    //    is in the object's .text frame; add the object's final text_offset so
+    //    it lines up with the merged .text the gsym vaddrs use.
     if (ls.obj_count == 0) { return 0; }
-    // Count total line entries first so the merged table is sized exactly.
+    if (obj_sel < 0 || obj_sel >= ls.obj_count) { return 0; }
+    let is *reader.ObjFile as o_sel = linker.get_obj(ls, obj_sel);
+    let is *reader.ObjSection as d_sel = _find_cstdebug(o_sel);
+    if (cast(i64, d_sel) == 0 || d_sel.size < 16) { return 0; }
+    if (_read_u32_at(d_sel.data, 0) != dbgproto.CSTDEBUG_MAGIC) { return 0; }
     let is i32 as total_locs with mut = 0;
-    let is i32 as oic with mut = 0;
-    while (oic < ls.obj_count) {
-        let is *reader.ObjFile as oc = linker.get_obj(ls, oic);
-        let is *reader.ObjSection as dc = _find_cstdebug(oc);
-        if (cast(i64, dc) != 0 && dc.size >= 16) {
-            let is *u8 as bc = dc.data;
-            if (_read_u32_at(bc, 0) == dbgproto.CSTDEBUG_MAGIC) {
-                let is i64 as sl = _read_u32_at(bc, 8);
-                let is i64 as lo with mut = 12 + sl;
-                while ((lo & 3) != 0) { lo = lo + 1; }
-                total_locs = total_locs + cast(i32, _read_u32_at(bc, lo));
-            }
-        }
-        oic = oic + 1;
+    {
+        let is *u8 as bc = d_sel.data;
+        let is i64 as sl = _read_u32_at(bc, 8);
+        let is i64 as lo with mut = 12 + sl;
+        while ((lo & 3) != 0) { lo = lo + 1; }
+        total_locs = cast(i32, _read_u32_at(bc, lo));
     }
     if (total_locs < 1) { total_locs = 1; }
     let is *i32 as merged_offsets = cast(*i32, om.opt_alloc(cast(i64, total_locs) * 4));
@@ -683,35 +684,27 @@ fn build_module_stream(ls as *linker.LinkerState,
     *out_source = cast(*u8, 0);
     *out_source_len = 0;
 
-    let is i32 as oi with mut = 0;
-    while (oi < ls.obj_count) {
-        let is *reader.ObjFile as o = linker.get_obj(ls, oi);
-        let is *reader.ObjSection as ds = _find_cstdebug(o);
-        if (cast(i64, ds) != 0 && ds.size >= 16) {
-            let is *u8 as dbg_b = ds.data;
-            if (_read_u32_at(dbg_b, 0) == dbgproto.CSTDEBUG_MAGIC) {
-                let is i64 as src_len_b = _read_u32_at(dbg_b, 8);
-                if (*out_source_len == 0 && src_len_b > 0) {
-                    *out_source = cast(*u8, cast(i64, dbg_b) + 12);
-                    *out_source_len = cast(i32, src_len_b);
-                }
-                let is i64 as loff with mut = 12 + src_len_b;
-                while ((loff & 3) != 0) { loff = loff + 1; }
-                let is i64 as n_b = _read_u32_at(dbg_b, loff);
-                let is i64 as base_b = loff + 4;
-                let is i64 as t_off_b = o.text_offset;
-                let is i64 as li_b with mut = 0;
-                while (li_b < n_b) {
-                    let is i64 as local_b = _read_u32_at(dbg_b, base_b + li_b * 8);
-                    let is i64 as line_b  = _read_u32_at(dbg_b, base_b + li_b * 8 + 4);
-                    merged_offsets[merged_count] = cast(i32, t_off_b + local_b);
-                    merged_lines[merged_count]   = cast(i32, line_b);
-                    merged_count = merged_count + 1;
-                    li_b = li_b + 1;
-                }
-            }
+    {
+        let is *u8 as dbg_b = d_sel.data;
+        let is i64 as src_len_b = _read_u32_at(dbg_b, 8);
+        if (src_len_b > 0) {
+            *out_source = cast(*u8, cast(i64, dbg_b) + 12);
+            *out_source_len = cast(i32, src_len_b);
         }
-        oi = oi + 1;
+        let is i64 as loff with mut = 12 + src_len_b;
+        while ((loff & 3) != 0) { loff = loff + 1; }
+        let is i64 as n_b = _read_u32_at(dbg_b, loff);
+        let is i64 as base_b = loff + 4;
+        let is i64 as t_off_b = o_sel.text_offset;
+        let is i64 as li_b with mut = 0;
+        while (li_b < n_b) {
+            let is i64 as local_b = _read_u32_at(dbg_b, base_b + li_b * 8);
+            let is i64 as line_b  = _read_u32_at(dbg_b, base_b + li_b * 8 + 4);
+            merged_offsets[merged_count] = cast(i32, t_off_b + local_b);
+            merged_lines[merged_count]   = cast(i32, line_b);
+            merged_count = merged_count + 1;
+            li_b = li_b + 1;
+        }
     }
 
     if (*out_source_len == 0) { return 0; }
@@ -780,6 +773,9 @@ fn build_module_stream(ls as *linker.LinkerState,
     let is i32 as fi with mut = 0;
     while (fi < func_count) {
         let is *linker.GlobalSym as g = linker.gsym_get(gsyms, idx_arr[fi]);
+        // Only this module's functions; `fi` stays the GLOBAL ordinal so the
+        // IPI item index and the next-function sizing stay consistent.
+        if (g.obj_idx != obj_sel) { fi = fi + 1; continue; }
         let is i64 as fn_off = g.vaddr - text_section_va;
         let is i64 as fn_end with mut = ls.text_vaddr + cast(i64, ls.text_size);
         if (fi + 1 < func_count) {
@@ -913,6 +909,7 @@ fn build_module_stream(ls as *linker.LinkerState,
     fi = 0;
     while (fi < func_count) {
         let is *linker.GlobalSym as g = linker.gsym_get(gsyms, idx_arr[fi]);
+        if (g.obj_idx != obj_sel) { fi = fi + 1; continue; }
         let is i64 as fn_section_off = g.vaddr - text_section_va;
         let is i64 as fn_obj_off = g.vaddr - ls.text_vaddr;       // may be < 0 for stub fns
         let is i64 as fn_obj_end with mut = cast(i64, ls.text_size);
