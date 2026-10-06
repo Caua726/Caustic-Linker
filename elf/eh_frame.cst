@@ -75,7 +75,7 @@ fn cfi_present(ls as *linker.LinkerState) as i32 {
 }
 
 // Emit the CIE and return its start offset.
-fn _emit_cie(out as *reader.ByteBuffer) as i64 {
+fn _emit_cie(out as *reader.ByteBuffer, pic as i32) as i64 {
     // AArch64 differs from x86_64 in three CIE fields: the code alignment
     // factor is the 4-byte instruction, the return address lives in x30 (not
     // on the stack at entry), and the CFA starts at sp rather than rsp+8.
@@ -93,7 +93,10 @@ fn _emit_cie(out as *reader.ByteBuffer) as i64 {
     reader.buf_emit8(out, 120);                   // data_alignment_factor = -8 (sleb)
     if (is_a64 == 1) { reader.buf_emit8(out, 30); } else { reader.buf_emit8(out, 16); } // return_address_register
     reader.buf_emit8(out, 1);                     // augmentation_length
-    reader.buf_emit8(out, 0);                     // pointer_encoding = DW_EH_PE_absptr
+    // pointer_encoding: a PIC image (.so) is mapped at an arbitrary base, so
+    // the FDE's pc_begin must be a pcrel sdata4 (0x1b); a non-PIE executable
+    // uses absptr (0).
+    if (pic == 1) { reader.buf_emit8(out, 27); } else { reader.buf_emit8(out, 0); }
     // Initial instructions.
     if (is_a64 == 1) {
         reader.buf_emit8(out, cast(i32, DW_CFA_def_cfa));
@@ -192,8 +195,9 @@ fn _sort_gsym_idx(idx as *i32, va as *i64, n as i32) as void {
 // time we get here. Fills fde_pc[i]/fde_off[i] for the header's table and
 // returns the FDE count.
 fn build_eh_frame(ls as *linker.LinkerState, out as *reader.ByteBuffer,
-                  fde_pc as *i64, fde_off as *i64) as i32 {
-    let is i64 as cie_start = _emit_cie(out);
+                  fde_pc as *i64, fde_off as *i64,
+                  pic as i32, eh_vaddr as i64) as i32 {
+    let is i64 as cie_start = _emit_cie(out, pic);
 
     // Sorted defined .text globals = the functions, with their final addresses.
     let is *linker.GlobalSymTab as gsyms = linker.get_gsyms(ls);
@@ -235,8 +239,16 @@ fn build_eh_frame(ls as *linker.LinkerState, out as *reader.ByteBuffer,
             reader.buf_emit32_le(out, 0);                 // length (patched)
             let is i64 as len_off = out.len - 4;
             reader.buf_emit32_le(out, (fde_start + 4) - cie_start);
-            reader.buf_emit64_le(out, begin);             // pc_begin (absptr)
-            reader.buf_emit64_le(out, fin - begin);       // pc_range
+            if (pic == 1) {
+                // pc_begin: sdata4, pcrel from this field's own address. The
+                // delta is load-base-independent, so the linker can resolve it.
+                let is i64 as field_addr = eh_vaddr + out.len;
+                reader.buf_emit32_le(out, begin - field_addr);
+                reader.buf_emit32_le(out, fin - begin);       // pc_range (sdata4)
+            } else {
+                reader.buf_emit64_le(out, begin);             // pc_begin (absptr)
+                reader.buf_emit64_le(out, fin - begin);       // pc_range
+            }
             reader.buf_emit8(out, 0);                     // augmentation_length
             let is i32 as j with mut = 0;
             while (j < cfi_len) { reader.buf_emit8(out, cast(i32, cfi_ptr[j])); j = j + 1; }
