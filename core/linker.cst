@@ -663,7 +663,7 @@ fn dead_strip(ls as *LinkerState) as void {
         let is i32 as si with mut = 0;
         while (si < obj.sym_count) {
             let is *reader.ObjSym as sy = reader.sym_get(obj, si);
-            if (sy.section == 0 && sy.binding == reader.STB_GLOBAL && sy.name_len > 0) {
+            if (_undef_sec(sy.section) == 1 && sy.binding == reader.STB_GLOBAL && sy.name_len > 0) {
                 let is i32 as gi = ds_find_name(sy.name, sy.name_len);
                 if (gi >= 0 && ds_f(gi).live == 0) { sy.binding = reader.STB_LOCAL; }
             }
@@ -1067,6 +1067,14 @@ fn synthesize_section_bounds_syms(ls as *LinkerState, gsyms as *GlobalSymTab) as
     }
 }
 
+// A symbol with no section. The ELF reader uses 0, the COFF reader 99 (see
+// coff_reader.cst) — the linker's "is it defined" tests must accept both, or a
+// COFF extern looks defined and a cross-object reference is a false duplicate.
+fn _undef_sec(section as i32) as i32 {
+    if (section == 0 || section == 99) { return 1; }
+    return 0;
+}
+
 fn build_symtab(ls as *LinkerState) as i32 {
     let is i32 as errors with mut = 0;
     let is *GlobalSymTab as gsyms = get_gsyms(ls);
@@ -1084,7 +1092,7 @@ fn build_symtab(ls as *LinkerState) as i32 {
 
             if (si == 0 || sym.sym_type == reader.STT_SECTION) {
                 // Skip null and section symbols
-            } else if (sym.binding == reader.STB_GLOBAL && sym.section != 0) {
+            } else if (sym.binding == reader.STB_GLOBAL && _undef_sec(sym.section) == 0) {
                 let is i64 as vaddr = resolve_sym_vaddr(ls, obj, sym.section, sym.value);
                 let is i32 as existing = gsym_find(gsyms, sym.name, sym.name_len);
                 if (existing >= 0) {
@@ -1103,7 +1111,7 @@ fn build_symtab(ls as *LinkerState) as i32 {
                 } else {
                     gsym_add(gsyms, sym.name, sym.name_len, sym.section, vaddr, i, 1);
                 }
-            } else if (sym.binding == reader.STB_GLOBAL && sym.section == 0) {
+            } else if (sym.binding == reader.STB_GLOBAL && _undef_sec(sym.section) == 1) {
                 let is i32 as existing = gsym_find(gsyms, sym.name, sym.name_len);
                 if (existing < 0) {
                     gsym_add(gsyms, sym.name, sym.name_len, 0, 0, i, 0);
