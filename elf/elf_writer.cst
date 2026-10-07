@@ -583,12 +583,19 @@ fn write_shared_object(ls as *linker.LinkerState, output_path as *u8) as i32 {
     let is *reader.ByteBuffer as data_buf = linker.get_data(ls);
     let is *linker.GlobalSymTab as gsyms = linker.get_gsyms(ls);
 
-    // --- Build .dynstr + .dynsym for every defined global (exports) ---
-    let is reader.ByteBuffer as dynstr = reader.buf_init(8192);
-    let is reader.ByteBuffer as dynsym = reader.buf_init(8192);
-    reader.buf_emit8(&dynstr, 0);                 // .dynstr[0] = '\0'
-    let is i32 as zz with mut = 0;
-    while (zz < 24) { reader.buf_emit8(&dynsym, 0); zz = zz + 1; }   // null Elf64_Sym
+    // Imports occupy the first dynsym indices; exports follow them.
+    linker.collect_dynamic_syms(ls);
+    let is i32 as nimport = linker.get_dynsyms(ls).count;
+    ls.dynstr_buf = linker.alloc_bytebuf(8192);
+    ls.dynsym_buf = linker.alloc_bytebuf(8192);
+    let is *reader.ByteBuffer as dynstr = cast(*reader.ByteBuffer, ls.dynstr_buf);
+    let is *reader.ByteBuffer as dynsym = cast(*reader.ByteBuffer, ls.dynsym_buf);
+    let is *i32 as lib_offsets with mut = cast(*i32, 0);
+    if (ls.needed_count > 0) {
+        lib_offsets = cast(*i32, om.opt_alloc(cast(i64, ls.needed_count) * 4));
+    }
+    ldyn.build_dynstr(ls, lib_offsets);
+    ldyn.build_dynsym_entries(ls);
 
     let is i32 as nexport with mut = 0;
     let is i32 as gi with mut = 0;
@@ -597,20 +604,20 @@ fn write_shared_object(ls as *linker.LinkerState, output_path as *u8) as i32 {
             cast(i64, gsyms.data) + cast(i64, gi) * sizeof(linker.GlobalSym));
         if (g.defined == 1 && g.name_len > 0) {
             let is i64 as nameoff = cast(i64, dynstr.len);
-            reader.buf_append(&dynstr, g.name, cast(i64, g.name_len));
-            reader.buf_emit8(&dynstr, 0);
-            // st_shndx (our section-header indices): 1=text 2=rodata 5=data 7=bss
+            reader.buf_append(dynstr, g.name, cast(i64, g.name_len));
+            reader.buf_emit8(dynstr, 0);
+            // st_shndx: 1=text 2=rodata 6=data 8=bss
             let is i32 as shndx with mut = 1;
             let is i32 as stt with mut = 2;            // STT_FUNC
             if (g.section == 3) { shndx = 2; stt = 1; }
             if (g.section == 2) { shndx = 6; stt = 1; }
             if (g.section == 4) { shndx = 8; stt = 1; }
-            reader.buf_emit32_le(&dynsym, nameoff);    // st_name
-            reader.buf_emit8(&dynsym, cast(i32, (1 << 4) + stt)); // st_info = GLOBAL|stt
-            reader.buf_emit8(&dynsym, 0);              // st_other
-            reader.buf_emit16_le(&dynsym, shndx);      // st_shndx
-            reader.buf_emit64_le(&dynsym, g.vaddr);    // st_value (bias-relative)
-            reader.buf_emit64_le(&dynsym, 0);          // st_size
+            reader.buf_emit32_le(dynsym, nameoff);    // st_name
+            reader.buf_emit8(dynsym, cast(i32, (1 << 4) + stt)); // st_info = GLOBAL|stt
+            reader.buf_emit8(dynsym, 0);              // st_other
+            reader.buf_emit16_le(dynsym, shndx);      // st_shndx
+            reader.buf_emit64_le(dynsym, g.vaddr);    // st_value (bias-relative)
+            reader.buf_emit64_le(dynsym, 0);          // st_size
             nexport = nexport + 1;
         }
         gi = gi + 1;
@@ -618,9 +625,9 @@ fn write_shared_object(ls as *linker.LinkerState, output_path as *u8) as i32 {
     let is i64 as dynsym_size = cast(i64, dynsym.len);
     let is i64 as dynstr_size = cast(i64, dynstr.len);
 
-    // --- Build SysV .hash (DT_HASH) over the exports (ld-linux needs it) ---
-    let is i32 as nsyms = nexport + 1;          // includes null entry at index 0
-    let is i32 as nbucket with mut = nexport;
+    // SysV .hash covers the complete table, including undefined imports.
+    let is i32 as nsyms = nimport + nexport + 1;
+    let is i32 as nbucket with mut = nsyms - 1;
     if (nbucket < 1) { nbucket = 1; }
     let is *i32 as buckets = cast(*i32, om.opt_alloc(cast(i64, nbucket) * 4));
     let is *i32 as chain = cast(*i32, om.opt_alloc(cast(i64, nsyms) * 4));
@@ -629,18 +636,14 @@ fn write_shared_object(ls as *linker.LinkerState, output_path as *u8) as i32 {
     zb = 0;
     while (zb < nsyms) { chain[zb] = 0; zb = zb + 1; }
     let is i32 as hidx with mut = 1;
-    let is i32 as hgi with mut = 0;
-    while (hgi < gsyms.count) {
-        let is *linker.GlobalSym as hg = cast(*linker.GlobalSym,
-            cast(i64, gsyms.data) + cast(i64, hgi) * sizeof(linker.GlobalSym));
-        if (hg.defined == 1 && hg.name_len > 0) {
-            let is i64 as hv = elf_hash(hg.name, hg.name_len);
-            let is i32 as b = cast(i32, hv % cast(i64, nbucket));
-            chain[hidx] = buckets[b];
-            buckets[b] = hidx;
-            hidx = hidx + 1;
-        }
-        hgi = hgi + 1;
+    while (hidx < nsyms) {
+        let is i64 as nameoff = reader.read_u32(dynsym.data, cast(i64, hidx) * 24);
+        let is *u8 as name = cast(*u8, cast(i64, dynstr.data) + nameoff);
+        let is i64 as hv = elf_hash(name, reader.cstrlen(name));
+        let is i32 as b = cast(i32, hv % cast(i64, nbucket));
+        chain[hidx] = buckets[b];
+        buckets[b] = hidx;
+        hidx = hidx + 1;
     }
     let is reader.ByteBuffer as hashb = reader.buf_init(256);
     reader.buf_emit32_le(&hashb, cast(i64, nbucket));
@@ -654,8 +657,8 @@ fn write_shared_object(ls as *linker.LinkerState, output_path as *u8) as i32 {
     // --- Flat layout: file offset == vaddr for all loaded content, so every
     // PT_LOAD trivially satisfies p_vaddr % page == p_offset % page (ld-linux
     // rejects otherwise). text/rodata/data/bss keep the vaddrs assign_addresses
-    // gave them (PC-relative relocs depend on them); the dynamic metadata
-    // (.hash .dynsym .dynstr .dynamic) lives in its own page after bss. ---
+    // gave them. Imported calls use a separate RX PLT page after the image;
+    // the dynamic metadata and loader-written GOT follow in an RW segment.
     let is i64 as text_vaddr = ls.text_vaddr;
     let is i64 as text_end = text_vaddr + ls.text_size;
 
@@ -677,19 +680,59 @@ fn write_shared_object(ls as *linker.LinkerState, output_path as *u8) as i32 {
     let is i64 as image_mem_end with mut = text_end;
     if (has_rw == 1) { if (rw_mem_end > image_mem_end) { image_mem_end = rw_mem_end; } }
 
-    let is i64 as hash_vaddr = align_up(image_mem_end, PAGE_SIZE);
+    let is i32 as nfunc = linker.count_func_dynsyms(ls);
+    let is i32 as ndata = linker.count_data_dynsyms(ls);
+    let is i64 as plt_size with mut = 0;
+    let is i64 as got_size with mut = 0;
+    let is i64 as data_got_size = cast(i64, ndata) * 8;
+    let is i64 as relaplt_size = cast(i64, nfunc) * 24;
+    let is i64 as reladyn_size = cast(i64, ndata) * 24;
+    if (nimport > 0) {
+        plt_size = 16 + cast(i64, nfunc) * 16;
+        got_size = 24 + cast(i64, nfunc) * 8;
+        ls.plt_buf = linker.alloc_bytebuf(plt_size);
+        ls.got_buf = linker.alloc_bytebuf(got_size);
+        ls.data_got_buf = linker.alloc_bytebuf(data_got_size + 8);
+        ls.relaplt_buf = linker.alloc_bytebuf(relaplt_size + 24);
+        ls.reladyn_buf = linker.alloc_bytebuf(reladyn_size + 24);
+    }
+    let is i64 as plt_vaddr = align_up(image_mem_end, PAGE_SIZE);
+    let is i64 as hash_vaddr = align_up(plt_vaddr + plt_size, PAGE_SIZE);
     let is i64 as dynsym_vaddr = align_up(hash_vaddr + hash_size, 8);
     let is i64 as dynstr_vaddr = dynsym_vaddr + dynsym_size;
-    let is i64 as dynamic_vaddr = align_up(dynstr_vaddr + dynstr_size, 8);
+    let is i64 as got_vaddr = align_up(dynstr_vaddr + dynstr_size, 8);
+    let is i64 as data_got_vaddr = got_vaddr + got_size;
+    let is i64 as relaplt_vaddr = data_got_vaddr + data_got_size;
+    let is i64 as reladyn_vaddr = relaplt_vaddr + relaplt_size;
+    let is i64 as dynamic_vaddr = reladyn_vaddr + reladyn_size;
 
-    // .dynamic: DT_HASH(4) DT_SYMTAB(6) DT_STRTAB(5) DT_STRSZ(10) DT_SYMENT(11) DT_NULL(0)
-    let is reader.ByteBuffer as dynamic = reader.buf_init(256);
-    reader.buf_emit64_le(&dynamic, 4); reader.buf_emit64_le(&dynamic, hash_vaddr);    // DT_HASH
-    reader.buf_emit64_le(&dynamic, 6); reader.buf_emit64_le(&dynamic, dynsym_vaddr);  // DT_SYMTAB
-    reader.buf_emit64_le(&dynamic, 5); reader.buf_emit64_le(&dynamic, dynstr_vaddr);  // DT_STRTAB
-    reader.buf_emit64_le(&dynamic, 10); reader.buf_emit64_le(&dynamic, dynstr_size);  // DT_STRSZ
-    reader.buf_emit64_le(&dynamic, 11); reader.buf_emit64_le(&dynamic, 24);           // DT_SYMENT
-    reader.buf_emit64_le(&dynamic, 0); reader.buf_emit64_le(&dynamic, 0);             // DT_NULL
+    ls.dynamic_buf = linker.alloc_bytebuf(256 + cast(i64, ls.needed_count) * 16);
+    let is *reader.ByteBuffer as dynamic = cast(*reader.ByteBuffer, ls.dynamic_buf);
+    if (nimport > 0) {
+        ldyn.build_plt_got(ls, plt_vaddr, got_vaddr);
+        linker.build_data_got(ls, data_got_vaddr);
+        ldyn.build_rela_plt_entries(ls);
+        linker.build_rela_dyn(ls);
+        ldyn.build_dynamic_section(ls, lib_offsets, got_vaddr, dynsym_vaddr,
+                                  dynstr_vaddr, hash_vaddr, relaplt_vaddr,
+                                  reladyn_vaddr);
+        patch_got_dynamic(cast(*reader.ByteBuffer, ls.got_buf), dynamic_vaddr);
+    } else {
+        let is i32 as li with mut = 0;
+        while (li < ls.needed_count) {
+            reader.buf_emit64_le(dynamic, 1); // DT_NEEDED
+            reader.buf_emit64_le(dynamic, cast(i64, lib_offsets[li]));
+            li = li + 1;
+        }
+        reader.buf_emit64_le(dynamic, 4); reader.buf_emit64_le(dynamic, hash_vaddr);
+        reader.buf_emit64_le(dynamic, 6); reader.buf_emit64_le(dynamic, dynsym_vaddr);
+        reader.buf_emit64_le(dynamic, 5); reader.buf_emit64_le(dynamic, dynstr_vaddr);
+        reader.buf_emit64_le(dynamic, 10); reader.buf_emit64_le(dynamic, dynstr_size);
+        reader.buf_emit64_le(dynamic, 11); reader.buf_emit64_le(dynamic, 24);
+        reader.buf_emit64_le(dynamic, 0); reader.buf_emit64_le(dynamic, 0);
+    }
+    // Relocations must see the assigned PLT/GOT addresses, never zero.
+    reloc.apply_relocations(ls);
     let is i64 as dynamic_size = cast(i64, dynamic.len);
     let is i64 as meta_end = dynamic_vaddr + dynamic_size;
 
@@ -733,6 +776,18 @@ fn write_shared_object(ls as *linker.LinkerState, output_path as *u8) as i32 {
     let is i64 as nm_shstr = cast(i64, shstr.len);    reader.buf_append(&shstr, ".shstrtab", 9); reader.buf_emit8(&shstr, 0);
     let is i64 as nm_eh_frame = cast(i64, shstr.len);     reader.buf_append(&shstr, ".eh_frame", 9); reader.buf_emit8(&shstr, 0);
     let is i64 as nm_eh_frame_hdr = cast(i64, shstr.len); reader.buf_append(&shstr, ".eh_frame_hdr", 13); reader.buf_emit8(&shstr, 0);
+    let is i64 as nm_plt with mut = 0;
+    let is i64 as nm_got with mut = 0;
+    let is i64 as nm_data_got with mut = 0;
+    let is i64 as nm_relaplt with mut = 0;
+    let is i64 as nm_reladyn with mut = 0;
+    if (nimport > 0) {
+        nm_plt = cast(i64, shstr.len); reader.buf_append(&shstr, ".plt", 4); reader.buf_emit8(&shstr, 0);
+        nm_got = cast(i64, shstr.len); reader.buf_append(&shstr, ".got.plt", 8); reader.buf_emit8(&shstr, 0);
+        nm_data_got = cast(i64, shstr.len); reader.buf_append(&shstr, ".got", 4); reader.buf_emit8(&shstr, 0);
+        nm_relaplt = cast(i64, shstr.len); reader.buf_append(&shstr, ".rela.plt", 9); reader.buf_emit8(&shstr, 0);
+        nm_reladyn = cast(i64, shstr.len); reader.buf_append(&shstr, ".rela.dyn", 9); reader.buf_emit8(&shstr, 0);
+    }
     let is i64 as shstr_foff = align_up(meta_end2, 8);
     let is i64 as shdr_foff = align_up(shstr_foff + cast(i64, shstr.len), 8);
 
@@ -741,12 +796,17 @@ fn write_shared_object(ls as *linker.LinkerState, output_path as *u8) as i32 {
     if (have_eh == 1) { nph = nph + 1; }     // + PT_GNU_EH_FRAME
     let is i32 as nsec with mut = 10;
     if (have_eh == 1) { nsec = 12; }
+    let is i32 as dynsec_base = nsec;
+    if (nimport > 0) { nph = nph + 1; nsec = nsec + 5; }
 
     // === Write it out (flat: file offset == vaddr for loaded content) ===
     write_elf_header(&out, ET_DYN, 0, ELF_HDR_SIZE, shdr_foff, nph, nsec, 9);
     write_phdr(&out, PT_LOAD, PF_R + PF_X, 0, 0, 0, text_end, text_end, PAGE_SIZE);
     if (has_rw == 1) {
         write_phdr(&out, PT_LOAD, PF_R + PF_W, rw_start, rw_start, rw_start, rw_file_end - rw_start, rw_mem_end - rw_start, PAGE_SIZE);
+    }
+    if (nimport > 0) {
+        write_phdr(&out, PT_LOAD, PF_R + PF_X, plt_vaddr, plt_vaddr, plt_vaddr, plt_size, plt_size, PAGE_SIZE);
     }
     write_phdr(&out, PT_LOAD, PF_R + PF_W, hash_vaddr, hash_vaddr, hash_vaddr, meta_end2 - hash_vaddr, meta_end2 - hash_vaddr, PAGE_SIZE);
     write_phdr(&out, PT_DYNAMIC, PF_R + PF_W, dynamic_vaddr, dynamic_vaddr, dynamic_vaddr, dynamic_size, dynamic_size, 8);
@@ -758,9 +818,23 @@ fn write_shared_object(ls as *linker.LinkerState, output_path as *u8) as i32 {
     reader.buf_pad_to(&out, text_vaddr);   reader.buf_append(&out, text_buf.data, ls.text_size);
     if (ls.rodata_size > 0) { reader.buf_pad_to(&out, ls.rodata_vaddr); reader.buf_append(&out, rodata_buf.data, ls.rodata_size); }
     if (ls.data_size > 0) { reader.buf_pad_to(&out, ls.data_vaddr); reader.buf_append(&out, data_buf.data, ls.data_size); }
+    if (nimport > 0) {
+        let is *reader.ByteBuffer as plt_b = cast(*reader.ByteBuffer, ls.plt_buf);
+        reader.buf_pad_to(&out, plt_vaddr); reader.buf_append(&out, plt_b.data, plt_b.len);
+    }
     reader.buf_pad_to(&out, hash_vaddr);    reader.buf_append(&out, hashb.data, hash_size);
     reader.buf_pad_to(&out, dynsym_vaddr);  reader.buf_append(&out, dynsym.data, dynsym_size);
     reader.buf_pad_to(&out, dynstr_vaddr);  reader.buf_append(&out, dynstr.data, dynstr_size);
+    if (nimport > 0) {
+        let is *reader.ByteBuffer as got_b = cast(*reader.ByteBuffer, ls.got_buf);
+        let is *reader.ByteBuffer as data_got_b = cast(*reader.ByteBuffer, ls.data_got_buf);
+        let is *reader.ByteBuffer as relaplt_b = cast(*reader.ByteBuffer, ls.relaplt_buf);
+        let is *reader.ByteBuffer as reladyn_b = cast(*reader.ByteBuffer, ls.reladyn_buf);
+        reader.buf_pad_to(&out, got_vaddr); reader.buf_append(&out, got_b.data, got_b.len);
+        reader.buf_pad_to(&out, data_got_vaddr); reader.buf_append(&out, data_got_b.data, data_got_b.len);
+        reader.buf_pad_to(&out, relaplt_vaddr); reader.buf_append(&out, relaplt_b.data, relaplt_b.len);
+        reader.buf_pad_to(&out, reladyn_vaddr); reader.buf_append(&out, reladyn_b.data, reladyn_b.len);
+    }
     reader.buf_pad_to(&out, dynamic_vaddr); reader.buf_append(&out, dynamic.data, dynamic_size);
     if (have_eh == 1) {
         reader.buf_pad_to(&out, eh_frame_vaddr); reader.buf_append(&out, eh_buf.data, eh_buf.len);
@@ -786,6 +860,13 @@ fn write_shared_object(ls as *linker.LinkerState, output_path as *u8) as i32 {
     if (have_eh == 1) {
         write_shdr(&out, nm_eh_frame, 1, 2, eh_frame_vaddr, eh_frame_vaddr, cast(i64, eh_buf.len), 0, 0, 8, 0);          // 10 .eh_frame
         write_shdr(&out, nm_eh_frame_hdr, 1, 2, hdr_vaddr, hdr_vaddr, cast(i64, hdr_buf.len), 0, 0, 4, 0);               // 11 .eh_frame_hdr
+    }
+    if (nimport > 0) {
+        write_shdr(&out, nm_plt, 1, 6, plt_vaddr, plt_vaddr, plt_size, 0, 0, 16, 16);
+        write_shdr(&out, nm_got, 1, 3, got_vaddr, got_vaddr, got_size, 0, 0, 8, 8);
+        write_shdr(&out, nm_data_got, 1, 3, data_got_vaddr, data_got_vaddr, data_got_size, 0, 0, 8, 8);
+        write_shdr(&out, nm_relaplt, 4, 2, relaplt_vaddr, relaplt_vaddr, relaplt_size, 4, cast(i64, dynsec_base + 1), 8, 24);
+        write_shdr(&out, nm_reladyn, 4, 2, reladyn_vaddr, reladyn_vaddr, reladyn_size, 4, cast(i64, dynsec_base + 2), 8, 24);
     }
 
     reader.print_str("caustic-ld: ");

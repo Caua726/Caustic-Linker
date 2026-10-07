@@ -387,7 +387,6 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
     // which handles apply_relocations internally (it must run AFTER
     // __imp_<sym> gsyms are registered so PC32 reloc resolves to IAT).
     if (g_shared == 1 && t.object_format != 2 && t.object_format != 3) {
-        reloc.apply_relocations(&ls);
         write_err = writer.write_shared_object(&ls, output_path);
     } else if (t.object_format == 3) {
         // CSE (Caustic Standard Executable). write_cse runs relocation and
@@ -753,10 +752,9 @@ fn main(argc as i64, argv as i64) as i32 {
 
     // PE/Windows path: collect cstimport from objects, dispatch to PE writer.
     if (shared_mode == 1 && t_main.object_format != 2 && t_main.object_format != 3) {
-        // --shared (ELF): relocate (PC-relative → bias-independent) → ET_DYN .so.
+        // --shared (ELF): the writer assigns PLT/GOT addresses before relocating.
         // For Windows (object_format==2), --shared falls through to the PE writer
         // below, which emits a .dll (export directory) when ls.is_shared==1.
-        reloc.apply_relocations(&ls);
         write_err = writer.write_shared_object(&ls, output_path);
     } else if (t_main.object_format == 3) {
         // CSE (Caustic Standard Executable) — relocation + mode dispatch

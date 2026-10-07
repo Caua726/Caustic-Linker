@@ -1320,7 +1320,7 @@ fn collect_dynamic_syms(ls as *LinkerState) as void {
 
 // ELF hash algorithm
 fn is_dynamic_sym(ls as *LinkerState, name as *u8, name_len as i32) as i32 {
-    if (ls.needed_count == 0) { return 0; }
+    if (ls.needed_count == 0 && ls.is_shared == 0) { return 0; }
     if (cast(i64, ls.dynsyms) == 0) { return 0; }
     let is *DynSymTab as dst = get_dynsyms(ls);
     let is i32 as idx = dynsym_find(dst, name, name_len);
