@@ -52,6 +52,12 @@ Built by the Caustic toolchain itself — no `make`, `gcc`, or `ld`:
 - **Eager binding**: all dynamic symbols resolved at startup (DT_BIND_NOW)
 - **_start stub**: auto-generated entry point that calls `main` and exits via syscall
 - **ELF output**: proper program headers, section layout, symbol table
+- **Object-local sections**: ELF symbols use their selected `sh_link` string
+  table and normalized section ids, not assumed section-header positions.
+  Local absolute/section relocations work with shared LLVM name tables and
+  reordered clang/GNU sections, including merged custom-section pointers.
+  The assembler's `test-local-relocations` consumer exercises all three
+  producers through the actual linker and native executable.
 - **ELF debug information**: `-g` / `--debug` emits DWARF from the compiler's
   object metadata; `--strip` suppresses it. From the compiler root,
   `caustic-mk run test-module-context` checks homonymous module structs/enums
@@ -63,6 +69,14 @@ Built by the Caustic toolchain itself — no `make`, `gcc`, or `ld`:
   From the compiler root, `caustic-mk run test-windows` exercises 8192-byte
   recursive frames at all optimization levels and separate PE object links
   in a private Wine/Xvfb session.
+  Merged custom sections receive actual PE RVAs, file bytes, permissions,
+  global/local/section relocations and DIR64 base-relocation sites. Synthetic
+  section bounds are defined after this layout, including existing external
+  references. PE image header names use the format's eight-byte limit.
+  The same runner exercises mutable/empty/shared strings in two custom
+  sections, separate object links and a DLL whose preferred address is
+  deliberately unavailable; the loader must relocate it before execution.
+  The DLL host uses mingw and Caustic's internal System V calling convention.
 
 ## Architecture
 

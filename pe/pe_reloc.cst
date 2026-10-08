@@ -36,6 +36,9 @@ fn build_reloc_blob(ls as *linker.LinkerState, out as *reader.ByteBuffer,
                     rva = rodata_rva + obj.rodata_offset + rel.offset;
                 } else if (rel.section == reader.SECIDX_DATA) {
                     rva = data_rva + obj.data_offset + rel.offset;
+                } else if (rel.section > reader.SECIDX_BSS) {
+                    let is i64 as vaddr = linker.resolve_sym_vaddr(ls, obj, rel.section, rel.offset);
+                    if (vaddr != 0) { rva = vaddr - ls.base_addr; }
                 }
                 if (rva >= 0) {
                     rvas[count] = rva;

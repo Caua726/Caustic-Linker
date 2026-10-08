@@ -284,7 +284,7 @@ struct ObjFile {
     csec_data as *u8;       // array of ObjSection, one per custom section
     csec_names as *u8;      // array of *u8 (name pointers)
     csec_name_lens as *u8;  // array of i32
-    csec_indices as *u8;    // array of i32 (original ELF sh_index)
+    csec_indices as *u8;    // array of i32 (object-local canonical section ids)
     csec_execs as *u8;      // array of i32 — 1 when sh_flags has SHF_EXECINSTR
     csec_count as i32;
 
@@ -440,6 +440,10 @@ struct ScanResult {
     symtab_info as i64;
     symtab_entsize as i64;
     strtab_off as i64;
+    text_shndx as i32;
+    data_shndx as i32;
+    rodata_shndx as i32;
+    bss_shndx as i32;
     rela_text_off as i64;
     rela_text_size as i64;
     rela_data_off as i64;
@@ -449,6 +453,15 @@ struct ScanResult {
     csec_rela_size as *u8;      // e_shnum * i64
     csec_rela_shndx as *u8;     // e_shnum * i32 — sh_info of each rela (target section's ELF shndx)
     csec_rela_count as i32;
+}
+
+fn _section_id(sr as *ScanResult, index as i32) as i32 {
+    if (index == 0) { return 0; }
+    if (index == sr.text_shndx) { return SECIDX_TEXT; }
+    if (index == sr.data_shndx) { return SECIDX_DATA; }
+    if (index == sr.rodata_shndx) { return SECIDX_RODATA; }
+    if (index == sr.bss_shndx) { return SECIDX_BSS; }
+    return SECIDX_BSS + index;
 }
 
 // Scan all section headers, populate ObjFile sections and ScanResult metadata.
@@ -484,6 +497,10 @@ fn parse_section_headers(data as *u8, obj as *ObjFile, sr as *ScanResult,
     sr.symtab_info = 0;
     sr.symtab_entsize = 24;
     sr.strtab_off = 0;
+    sr.text_shndx = 0;
+    sr.data_shndx = 0;
+    sr.rodata_shndx = 0;
+    sr.bss_shndx = 0;
     sr.rela_text_off = 0;
     sr.rela_text_size = 0;
     sr.rela_data_off = 0;
@@ -508,16 +525,19 @@ fn parse_section_headers(data as *u8, obj as *ObjFile, sr as *ScanResult,
                 obj.text.data = cast(*u8, cast(i64, data) + sh_offset);
                 obj.text.size = sh_size;
                 obj.text.sh_offset = sh_offset;
+                sr.text_shndx = cast(i32, si);
             }
             else if (streq_lit(name, ".data") == 1) {
                 obj.data_sec.data = cast(*u8, cast(i64, data) + sh_offset);
                 obj.data_sec.size = sh_size;
                 obj.data_sec.sh_offset = sh_offset;
+                sr.data_shndx = cast(i32, si);
             }
             else if (streq_lit(name, ".rodata") == 1) {
                 obj.rodata.data = cast(*u8, cast(i64, data) + sh_offset);
                 obj.rodata.size = sh_size;
                 obj.rodata.sh_offset = sh_offset;
+                sr.rodata_shndx = cast(i32, si);
             }
             else {
                 // Custom section — store it
@@ -532,7 +552,7 @@ fn parse_section_headers(data as *u8, obj as *ObjFile, sr as *ScanResult,
                     let is *i32 as nlp = cast(*i32, cast(i64, obj.csec_name_lens) + cast(i64, ci) * 4);
                     *nlp = cstrlen(name);
                     let is *i32 as idxp = cast(*i32, cast(i64, obj.csec_indices) + cast(i64, ci) * 4);
-                    *idxp = cast(i32, si);
+                    *idxp = SECIDX_BSS + cast(i32, si);
                     // SHF_EXECINSTR (bit 2) — the section carries code, so the
                     // layout must place it in the executable segment.
                     let is i64 as sh_flags = read_u64(data, sh + 8);
@@ -545,6 +565,7 @@ fn parse_section_headers(data as *u8, obj as *ObjFile, sr as *ScanResult,
         else if (sh_type == cast(i64, SHT_NOBITS)) {
             if (streq_lit(name, ".bss") == 1) {
                 obj.bss_size = sh_size;
+                sr.bss_shndx = cast(i32, si);
             }
         }
         else if (sh_type == cast(i64, SHT_SYMTAB)) {
@@ -554,9 +575,6 @@ fn parse_section_headers(data as *u8, obj as *ObjFile, sr as *ScanResult,
             if (read_u64(data, sh + 56) > 0) {
                 sr.symtab_entsize = read_u64(data, sh + 56);
             }
-        }
-        else if (sh_type == cast(i64, SHT_STRTAB) && si != e_shstrndx) {
-            sr.strtab_off = sh_offset;
         }
         else if (sh_type == cast(i64, SHT_RELA)) {
             if (streq_lit(name, ".rela.text") == 1) {
@@ -587,6 +605,11 @@ fn parse_section_headers(data as *u8, obj as *ObjFile, sr as *ScanResult,
 
         si = si + 1;
     }
+    // The symbol table selects its strings via sh_link. LLVM may share that
+    // table with section names; other objects may contain extra string tables.
+    if (sr.symtab_size > 0) {
+        sr.strtab_off = read_u64(data, e_shoff + sr.symtab_link * e_shentsize + 24);
+    }
 }
 
 // Parse symbol table entries into obj.syms array.
@@ -612,7 +635,7 @@ fn parse_symbols(data as *u8, obj as *ObjFile, sr as *ScanResult) as void {
 
         let is *u8 as sym_name = strtab_get(strtab, st_name);
         let is i32 as sym_name_len = cstrlen(sym_name);
-        let is i32 as sec = cast(i32, st_shndx);
+        let is i32 as sec = _section_id(sr, cast(i32, st_shndx));
 
         sym_add(obj, sym_name, sym_name_len, sec, st_value, binding, stype);
         syi = syi + 1;
@@ -700,13 +723,13 @@ fn read_obj(path as *u8, obj as *ObjFile) as i32 {
 
     parse_rela_section(data, obj, sr.rela_text_off, sr.rela_text_size, SECIDX_TEXT);
     parse_rela_section(data, obj, sr.rela_data_off, sr.rela_data_size, SECIDX_DATA);
-    // Custom-section relas: section index = target ELF shndx (sh_info).
+    // Normalize custom relocation targets into the same object-local ids.
     let is *i64 as csec_rela_off_arr = cast(*i64, sr.csec_rela_off);
     let is *i32 as csec_rela_shx_arr = cast(*i32, sr.csec_rela_shndx);
     _cci = 0;
     while (_cci < sr.csec_rela_count) {
         parse_rela_section(data, obj, csec_rela_off_arr[_cci], csec_rela_sz_arr[_cci],
-                           csec_rela_shx_arr[_cci]);
+                           _section_id(&sr, csec_rela_shx_arr[_cci]));
         _cci = _cci + 1;
     }
 

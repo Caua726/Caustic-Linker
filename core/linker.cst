@@ -967,7 +967,7 @@ fn resolve_sym_vaddr(ls as *LinkerState, obj as *reader.ObjFile,
     if (section == reader.SECIDX_BSS) {
         return ls.bss_vaddr + obj.bss_offset + value;
     }
-    // Custom sections: match by ELF sh_index stored in obj.csec_indices
+    // Custom sections: match the canonical object-local section id.
     if (section > reader.SECIDX_BSS) {
         let is *i32 as obj_csec_idx = cast(*i32, obj.csec_indices);
         let is *i64 as obj_csec_offs = cast(*i64, obj.csec_offsets);
@@ -1024,11 +1024,35 @@ fn make_bound_sym_name(prefix as *u8, prefix_len as i32,
     return buf;
 }
 
+fn _define_section_bound(gsyms as *GlobalSymTab, name as *u8, name_len as i32,
+                         vaddr as i64) as i32 {
+    let is i32 as existing = gsym_find(gsyms, name, name_len);
+    if (existing < 0) {
+        gsym_add(gsyms, name, name_len, 0, vaddr, cast(i32, 0 - 1), 1);
+        return 0;
+    }
+    let is *GlobalSym as g = gsym_get(gsyms, existing);
+    if (g.defined == 1) {
+        reader.print_str("error: duplicate symbol: ");
+        io._write_fd(io.STDERR, name, cast(i64, name_len));
+        reader.print_str("\n");
+        om.opt_free(name);
+        return 1;
+    }
+    g.section = 0;
+    g.vaddr = vaddr;
+    g.obj_idx = cast(i32, 0 - 1);
+    g.defined = 1;
+    om.opt_free(name);
+    return 0;
+}
+
 // Inject __start_<name> and __stop_<name> synthetic global symbols for
 // every merged custom section. Callers that reference these names in
 // source (e.g. `&__start_bus_types`) now resolve through the normal
 // name-based relocation path.
-fn synthesize_section_bounds_syms(ls as *LinkerState, gsyms as *GlobalSymTab) as void {
+fn synthesize_section_bounds_syms(ls as *LinkerState, gsyms as *GlobalSymTab) as i32 {
+    let is i32 as errors with mut = 0;
     let is *i64 as names  = cast(*i64, ls.csec_names);
     let is *i32 as nlens  = cast(*i32, ls.csec_name_lens);
     let is *i64 as vaddrs = cast(*i64, ls.csec_vaddrs);
@@ -1056,15 +1080,16 @@ fn synthesize_section_bounds_syms(ls as *LinkerState, gsyms as *GlobalSymTab) as
         let is i32 as start_len with mut = 0;
         let is *u8 as start_name = make_bound_sym_name(
             cast(*u8, &start_prefix), 8, sec_name, sec_len, &start_len);
-        gsym_add(gsyms, start_name, start_len, 0, sec_vaddr, cast(i32, 0 - 1), 1);
+        errors = errors + _define_section_bound(gsyms, start_name, start_len, sec_vaddr);
 
         let is i32 as stop_len with mut = 0;
         let is *u8 as stop_name = make_bound_sym_name(
             cast(*u8, &stop_prefix), 7, sec_name, sec_len, &stop_len);
-        gsym_add(gsyms, stop_name, stop_len, 0, sec_vaddr + sec_size, cast(i32, 0 - 1), 1);
+        errors = errors + _define_section_bound(gsyms, stop_name, stop_len, sec_vaddr + sec_size);
 
         ci = ci + 1;
     }
+    return errors;
 }
 
 // Validate after the format writer has resolved any synthesized definitions.
@@ -1093,7 +1118,10 @@ fn build_symtab(ls as *LinkerState) as i32 {
     let is i32 as errors with mut = 0;
     let is *GlobalSymTab as gsyms = get_gsyms(ls);
 
-    synthesize_section_bounds_syms(ls, gsyms);
+    // PE synthesizes bounds only after assigning its actual image addresses.
+    if (tgt.target_get().object_format != 2) {
+        errors = errors + synthesize_section_bounds_syms(ls, gsyms);
+    }
 
     let is i32 as i with mut = 0;
 

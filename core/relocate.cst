@@ -12,19 +12,7 @@ fn resolve_reloc_sym(ls as *linker.LinkerState, obj as *reader.ObjFile, sym_idx 
     let is *reader.ObjSym as sym = reader.sym_get(obj, sym_idx);
 
     if (sym.sym_type == reader.STT_SECTION) {
-        if (sym.section == reader.SECIDX_TEXT) {
-            return ls.text_vaddr + obj.text_offset;
-        }
-        if (sym.section == reader.SECIDX_DATA) {
-            return ls.data_vaddr + obj.data_offset;
-        }
-        if (sym.section == reader.SECIDX_RODATA) {
-            return ls.rodata_vaddr + obj.rodata_offset;
-        }
-        if (sym.section == reader.SECIDX_BSS) {
-            return ls.bss_vaddr + obj.bss_offset;
-        }
-        return 0;
+        return linker.resolve_sym_vaddr(ls, obj, sym.section, sym.value);
     }
 
     if (sym.binding == reader.STB_LOCAL && sym.section != 0) {
@@ -77,9 +65,8 @@ fn apply_relocations(ls as *linker.LinkerState) as void {
                 buf_offset = obj.data_offset + rel.offset;
             }
             else if (rel.section > reader.SECIDX_BSS) {
-                // Custom section — rel.section is the source obj's ELF shndx
-                // for that section. Match by obj.csec_indices, resolve to
-                // merged csec buffer + offset.
+                // Match the canonical object-local custom id, then resolve
+                // to the merged section buffer and this object's offset.
                 let is *i32 as obj_csec_idx = cast(*i32, obj.csec_indices);
                 let is *i64 as obj_csec_offs = cast(*i64, obj.csec_offsets);
                 let is *i64 as cnp = cast(*i64, obj.csec_names);
