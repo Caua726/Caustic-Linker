@@ -49,6 +49,13 @@ Built by the Caustic toolchain itself — no `make`, `gcc`, or `ld`:
 - **Eager binding**: all dynamic symbols resolved at startup (DT_BIND_NOW)
 - **_start stub**: auto-generated entry point that calls `main` and exits via syscall
 - **ELF output**: proper program headers, section layout, symbol table
+- **PE output**: Windows x86_64/AArch64 images with real import-slot addresses
+  and unwind tables. On x86_64 the guard-page probe is synthesized at its
+  actual text address before unresolved-symbol validation and relocation;
+  an undefined `__imp_*` name without a real import remains an error.
+  From the compiler root, `caustic-mk run test-windows` exercises 8192-byte
+  recursive frames at all optimization levels and separate PE object links
+  in a private Wine/Xvfb session.
 
 ## Architecture
 

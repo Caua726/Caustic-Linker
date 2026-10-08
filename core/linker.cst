@@ -1067,6 +1067,28 @@ fn synthesize_section_bounds_syms(ls as *LinkerState, gsyms as *GlobalSymTab) as
     }
 }
 
+// Validate after the format writer has resolved any synthesized definitions.
+// ELF has its definitions at build_symtab; PE must first assign its helper
+// and IAT addresses. Neither path may relocate an unresolved static symbol.
+fn validate_symbols(ls as *LinkerState) as i32 {
+    let is *GlobalSymTab as gsyms = get_gsyms(ls);
+    let is i32 as errors with mut = 0;
+    let is i32 as gi with mut = 0;
+    while (gi < gsyms.count) {
+        let is *GlobalSym as g = gsym_get(gsyms, gi);
+        // PE has already registered genuine IAT slots. A matching prefix
+        // alone is not a definition and cannot exempt an unresolved symbol.
+        if (g.defined == 0 && ls.needed_count == 0 && ls.is_shared == 0) {
+            reader.print_str("error: undefined symbol: ");
+            io._write_fd(io.STDERR, g.name, cast(i64, g.name_len));
+            reader.print_str("\n");
+            errors = errors + 1;
+        }
+        gi = gi + 1;
+    }
+    return errors;
+}
+
 fn build_symtab(ls as *LinkerState) as i32 {
     let is i32 as errors with mut = 0;
     let is *GlobalSymTab as gsyms = get_gsyms(ls);
@@ -1115,31 +1137,11 @@ fn build_symtab(ls as *LinkerState) as i32 {
         i = i + 1;
     }
 
-    // Check for unresolved symbols. In a static link with no library expected
-    // (needed_count == 0) and not building a shared object, an unresolved
-    // global is an ERROR: this used to print "warning: undefined symbol: ..."
-    // and write the image anyway, leaving the relocation pending — an external
-    // link target that looked like a successful build and then faulted at run
-    // time. A .so/.dll legitimately has undefined symbols, and so does a link
-    // that named a library to provide them, so both are still allowed.
-    let is i32 as gi with mut = 0;
-    while (gi < gsyms.count) {
-        let is *GlobalSym as g = gsym_get(gsyms, gi);
-        // A `__imp_<sym>` is an import slot: it is undefined in the object and
-        // bound by the import table during the PE write, which runs after this
-        // check (the IAT RVA is not known until the sections are laid out).
-        let is i32 as is_imp with mut = 0;
-        if (g.name_len >= 6 && g.name[0] == 95 && g.name[1] == 95
-            && g.name[2] == 105 && g.name[3] == 109 && g.name[4] == 112 && g.name[5] == 95) {
-            is_imp = 1;
-        }
-        if (g.defined == 0 && ls.needed_count == 0 && ls.is_shared == 0 && is_imp == 0) {
-            reader.print_str("error: undefined symbol: ");
-            io._write_fd(io.STDERR, g.name, cast(i64, g.name_len));
-            reader.print_str("\n");
-            errors = errors + 1;
-        }
-        gi = gi + 1;
+    // PE resolves its real helper and IAT definitions after final layout.
+    // Its writer validates before applying relocations; other formats can
+    // validate now, retaining the static-link error contract.
+    if (tgt.target_get().object_format != 2) {
+        errors = errors + validate_symbols(ls);
     }
 
     // Find entry point — a shared library (.so/.dll) has no entry, skip.

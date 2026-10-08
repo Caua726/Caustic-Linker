@@ -283,9 +283,8 @@ fn write_minimal_exit42(fd as i64) as i32 {
 //   0x400  .idata raw data — IAT region, IID, ILT, hint/name, DLL names
 //          (.idata layout described in compute_idata_layout below)
 //
-// Caller must have run apply_relocations BEFORE calling here so that any
-// __imp_<sym> reference in .text has been patched to point at the IAT slot
-// (assigned via pre-register-imports-as-gsyms below).
+// The writer assigns synthesized helper and import-slot addresses, validates
+// all symbols, and only then applies relocations against the final PE layout.
 // ============================================================
 
 fn write_pe_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
@@ -516,17 +515,20 @@ fn write_pe_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     //     we emit right after the entry stub at TEXT_RVA + ENTRY_STUB_SIZE.
     //     Upsert: if any obj already referenced it as undefined, patch in
     //     the resolved vaddr; otherwise add fresh.
-    let is i64 as chkstk_vaddr = ls.base_addr + TEXT_RVA + ENTRY_STUB_SIZE;
-    let is i32 as chk_existing = linker.gsym_find(gsyms2, "__caustic_chkstk", 16);
-    if (chk_existing >= 0) {
-        let is *linker.GlobalSym as cg = linker.gsym_get(gsyms2, chk_existing);
-        cg.vaddr = chkstk_vaddr;
-        cg.section = reader.SECIDX_TEXT;
-        cg.defined = 1;
-    } else {
-        linker.gsym_add(gsyms2, "__caustic_chkstk", 16,
-                        reader.SECIDX_TEXT, chkstk_vaddr, 0, 1);
+    if (is_a64 != tgt.ARCH_AARCH64) {
+        let is i64 as chkstk_vaddr = ls.base_addr + TEXT_RVA + ENTRY_STUB_SIZE;
+        let is i32 as chk_existing = linker.gsym_find(gsyms2, "__caustic_chkstk", 16);
+        if (chk_existing >= 0) {
+            let is *linker.GlobalSym as cg = linker.gsym_get(gsyms2, chk_existing);
+            cg.vaddr = chkstk_vaddr;
+            cg.section = reader.SECIDX_TEXT;
+            cg.defined = 1;
+        } else {
+            linker.gsym_add(gsyms2, "__caustic_chkstk", 16,
+                            reader.SECIDX_TEXT, chkstk_vaddr, 0, 1);
+        }
     }
+    if (linker.validate_symbols(ls) != 0) { return 1; }
 
     // Entry = stub's RVA (= TEXT_RVA, because stub is at the start of .text)
     ls.entry_vaddr = ls.base_addr + TEXT_RVA;
