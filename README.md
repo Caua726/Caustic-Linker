@@ -23,6 +23,9 @@ Built by the Caustic toolchain itself — no `make`, `gcc`, or `ld`:
 # Multi-object:
 ./caustic-ld main.cst.s.o lib.cst.s.o -o program
 
+# Debug information preserved from separately compiled objects:
+./caustic-ld -g main.cst.s.o -o program-debug
+
 # Static AArch64:
 ./caustic-ld --target=linux-aarch64 main-aarch64.o lib-aarch64.o -o program-aarch64
 
@@ -49,6 +52,10 @@ Built by the Caustic toolchain itself — no `make`, `gcc`, or `ld`:
 - **Eager binding**: all dynamic symbols resolved at startup (DT_BIND_NOW)
 - **_start stub**: auto-generated entry point that calls `main` and exits via syscall
 - **ELF output**: proper program headers, section layout, symbol table
+- **ELF debug information**: `-g` / `--debug` emits DWARF from the compiler's
+  object metadata; `--strip` suppresses it. From the compiler root,
+  `caustic-mk run test-module-context` checks homonymous module structs/enums
+  and actual field values in GDB for direct and separate-object executables.
 - **PE output**: Windows x86_64/AArch64 images with real import-slot addresses
   and unwind tables. On x86_64 the guard-page probe is synthesized at its
   actual text address before unresolved-symbol validation and relocation;
