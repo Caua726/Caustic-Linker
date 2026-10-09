@@ -383,9 +383,10 @@ fn write_pe_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     let is i64 as text_virt_for_layout = linker.get_text(ls).len + STUB_SIZE;
     let is i64 as text_pages = (text_virt_for_layout + SECTION_ALIGN - 1) / SECTION_ALIGN;
     let is i64 as idata_rva = TEXT_RVA + text_pages * SECTION_ALIGN;
-    // .idata always fits in 1 page for any realistic import set (a few DLLs,
-    // a few dozen symbols). imp.compute_idata_layout below allocates within that.
-    let is i64 as rodata_rva with mut = idata_rva + SECTION_ALIGN;
+    // Import tables can span multiple pages; reserve their complete mapped size.
+    let is imp.ImportLayout as lay = imp.compute_idata_layout(ls, idata_rva);
+    let is i64 as idata_pages = (lay.idata_virt_size + SECTION_ALIGN - 1) / SECTION_ALIGN;
+    let is i64 as rodata_rva with mut = idata_rva + idata_pages * SECTION_ALIGN;
     let is i64 as rodata_pages with mut = 0;
     if (has_rodata == 1) {
         rodata_pages = (rodata_virt + SECTION_ALIGN - 1) / SECTION_ALIGN;
@@ -425,9 +426,6 @@ fn write_pe_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     let is i64 as pdata_rva = custom_rva_start + custom_virt_total;
     let is i64 as xdata_rva = pdata_rva + SECTION_ALIGN;
     let is i64 as reloc_rva with mut = xdata_rva + SECTION_ALIGN;
-
-    let is imp.ImportLayout as lay = imp.compute_idata_layout(ls, idata_rva);
-
 
     // 2. Lay out text. We prepend three small routines BEFORE the merged
     //    object .text: entry stub (47), __caustic_chkstk (43), and

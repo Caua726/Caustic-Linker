@@ -264,13 +264,19 @@ fn cse_fat_files(x64_path as *u8, a64_path as *u8, output_path as *u8) as i32 {
     let is [2]i64 as paths;
     paths[0] = cast(i64, x64_path);
     paths[1] = cast(i64, a64_path);
-    return csew.write_cse_fat(cast(*u8, &paths), 2, output_path);
+    return _link_result(output_path, csew.write_cse_fat(cast(*u8, &paths), 2, output_path));
 }
 
 fn cse_combine_files(pe_path as *u8, elf_path as *u8, elf_a64_path as *u8,
                      pe_a64_path as *u8, cst_path as *u8, output_path as *u8) as i32 {
-    return csew.write_cse_combine_ape(pe_path, elf_path, elf_a64_path, pe_a64_path,
-                                      cst_path, output_path);
+    return _link_result(output_path, csew.write_cse_combine_ape(pe_path, elf_path, elf_a64_path, pe_a64_path,
+                                                               cst_path, output_path));
+}
+
+// A rejected link must not leave a previous success or a partial new image.
+fn _link_result(output_path as *u8, status as i32) as i32 {
+    if (status != 0) { io.unlink(output_path); }
+    return status;
 }
 
 fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
@@ -296,7 +302,7 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
     let is *tgt.Target as t_init = tgt.target_get();
     if (t_init.arch == tgt.ARCH_AARCH64 && (g_shared == 1 || lib_count > 0)) {
         print_str("caustic-ld: linux-aarch64 currently supports static linking only\n");
-        return 1;
+        return _link_result(output_path, 1);
     }
     if (t_init.object_format == 2) { init_base = 5368709120; }  // 0x140000000
     if (g_base_addr != 0) { init_base = g_base_addr; }
@@ -354,7 +360,7 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
             print_str("caustic-ld: error: failed to read ");
             print_str(path);
             print_str("\n");
-            return 1;
+            return _link_result(output_path, 1);
         }
 
         let is *i64 as arr = cast(*i64, ls.objs);
@@ -380,7 +386,7 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
 
     // Phase 3: Build symbol table + patch _start
     let is i32 as sym_err = linker.build_symtab(&ls);
-    if (sym_err != 0) { return 1; }
+    if (sym_err != 0) { return _link_result(output_path, 1); }
 
     let is i32 as write_err with mut = 0;
 
@@ -405,7 +411,7 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
         write_err = writer.write_executable(&ls, output_path);
     }
 
-    return write_err;
+    return _link_result(output_path, write_err);
 }
 
 // ============================================================
@@ -589,7 +595,7 @@ fn main(argc as i64, argv as i64) as i32 {
             print_str("caustic-ld: --cse-fat needs at least one --image=<file>\n");
             return 1;
         }
-        return csew.write_cse_fat(cse_fat_paths, cse_fat_count, output_path);
+        return _link_result(output_path, csew.write_cse_fat(cse_fat_paths, cse_fat_count, output_path));
     }
 
     if (cse_combine == 1) {
@@ -597,8 +603,8 @@ fn main(argc as i64, argv as i64) as i32 {
             print_str("caustic-ld: --cse-combine needs --pe=<file> and --elf=<file> (and optional --cst=<file>)\n");
             return 1;
         }
-        return csew.write_cse_combine_ape(cse_pe_path, cse_elf_path, cse_elf_a64_path,
-                                          cse_pe_a64_path, cse_cst_path, output_path);
+        return _link_result(output_path, csew.write_cse_combine_ape(cse_pe_path, cse_elf_path, cse_elf_a64_path,
+                                                                   cse_pe_a64_path, cse_cst_path, output_path));
     }
 
     if (num_inputs == 0) {
@@ -630,15 +636,15 @@ fn main(argc as i64, argv as i64) as i32 {
     // unless --base= was explicitly set; output defaults to a.exe instead
     // of a.out when -o was not given.
     let is *tgt.Target as t_main_init = tgt.target_get();
+    if (t_main_init.object_format == 2 && output_explicit == 0) {
+        output_path = "a.exe";
+    }
     if (t_main_init.arch == tgt.ARCH_AARCH64 && (shared_mode == 1 || needed_count > 0)) {
         print_str("caustic-ld: linux-aarch64 currently supports static linking only\n");
-        return 1;
+        return _link_result(output_path, 1);
     }
     if (t_main_init.object_format == 2 && base_addr == 4194304) {
         base_addr = 5368709120;  // 0x140000000
-    }
-    if (t_main_init.object_format == 2 && output_explicit == 0) {
-        output_path = "a.exe";
     }
     // --shared: ET_DYN at base 0 (position-independent), no _start stub.
     if (shared_mode == 1) { base_addr = 0; freestanding = 1; }
@@ -678,7 +684,7 @@ fn main(argc as i64, argv as i64) as i32 {
             print_str("error: failed to read ");
             print_str(path);
             print_str("\n");
-            return 1;
+            return _link_result(output_path, 1);
         }
 
         // Store pointer in array
@@ -742,7 +748,7 @@ fn main(argc as i64, argv as i64) as i32 {
     // Phase 3: Build symbol table + patch _start
     let is i32 as sym_err = linker.build_symtab(&ls);
     if (sym_err != 0) {
-        return 1;
+        return _link_result(output_path, 1);
     }
 
     if (verbose == 1) {
@@ -794,7 +800,7 @@ fn main(argc as i64, argv as i64) as i32 {
     }
 
     if (write_err != 0) {
-        return 1;
+        return _link_result(output_path, 1);
     }
 
     // Phase 6: Map file

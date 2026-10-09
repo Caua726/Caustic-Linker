@@ -77,6 +77,14 @@ Built by the Caustic toolchain itself — no `make`, `gcc`, or `ld`:
   sections, separate object links and a DLL whose preferred address is
   deliberately unavailable; the loader must relocate it before execution.
   The DLL host uses mingw and Caustic's internal System V calling convention.
+  Import storage reserves its complete page-aligned mapped size, so large IAT,
+  lookup and name tables cannot overlap following sections. The compiler's
+  `test-capacity` consumer calls 300 imports from one library and seven from
+  another in direct/separate PE images and cold/hot maker builds under Wine.
+- **Failed output ownership**: rejected API/CLI links remove a previous
+  successful or partially written output image. Permanent ELF/PE consumers
+  seed a real executable before testing unresolved symbols in normal/quiet
+  compiler mode and through the independent linker.
 
 ## Architecture
 
