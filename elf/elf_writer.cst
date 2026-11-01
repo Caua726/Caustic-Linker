@@ -303,6 +303,39 @@ fn build_static_metadata(meta as *StaticMeta, ls as *linker.LinkerState,
 // Static executable writer
 // ============================================================
 
+// Where write_executable will place .eh_frame_hdr, or 0 when the image gets
+// none. Computed before relocation so `__eh_frame_hdr` can be defined for the
+// program (std/exceptions.cst's backtrace reads it); write_executable repeats
+// the same layout and checks it lands at the same address.
+fn eh_frame_hdr_vaddr(ls as *linker.LinkerState) as i64 {
+    if (ehf.cfi_present(ls) == 0 || ls.freestanding == 1) { return 0; }
+    let is i64 as text_file_off = PAGE_SIZE;
+    let is *i32 as x_execs = cast(*i32, ls.csec_execs);
+    let is *i64 as x_sizes = cast(*i64, ls.csec_sizes);
+    let is i64 as rx with mut = ls.text_size;
+    let is i32 as xi with mut = 0;
+    while (xi < ls.csec_count) {
+        if (x_execs[xi] == 1 && x_sizes[xi] > 0) {
+            rx = (rx + 7) & (0 - 8);
+            rx = rx + x_sizes[xi];
+        }
+        xi = xi + 1;
+    }
+    let is reader.ByteBuffer as eh_buf = reader.buf_init(1024);
+    let is i32 as nf = ehf.cfi_fde_count(ls);
+    let is *i64 as fde_pc = cast(*i64, om.opt_alloc(cast(i64, nf + 1) * 8));
+    let is *i64 as fde_off = cast(*i64, om.opt_alloc(cast(i64, nf + 1) * 8));
+    ehf.build_eh_frame(ls, &eh_buf, fde_pc, fde_off, 0, 0);
+    let is i64 as len = cast(i64, eh_buf.len);
+    om.opt_free(cast(*u8, fde_pc));
+    om.opt_free(cast(*u8, fde_off));
+    om.opt_free(eh_buf.data);
+    if (len == 0) { return 0; }
+    rx = (rx + 7) & (0 - 8);
+    rx = rx + len;
+    return ls.base_addr + text_file_off + ((rx + 3) & (0 - 4));
+}
+
 fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     let is reader.ByteBuffer as out = reader.buf_init(131072);
 
@@ -369,6 +402,7 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
             ehf.build_eh_frame_hdr(&hdr_buf, fde_pc, fde_off, got,
                                    ls.base_addr + eh_foff, ls.base_addr + hdr_foff);
             rx_file_size = after + hdr_buf.len;
+            if (linker.eh_frame_hdr_sym_check(ls, ls.base_addr + hdr_foff) != 0) { return 1; }
         }
     }
 

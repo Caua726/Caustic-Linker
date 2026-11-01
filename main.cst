@@ -403,10 +403,14 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
         linker.collect_all_cstimports(&ls);
         write_err = pew.write_pe_executable(&ls, output_path);
     } else if (ls.needed_count > 0) {
+        // The dynamic writer builds no .eh_frame: the program's backtrace
+        // falls back to the frame-pointer chain.
+        linker.define_eh_frame_hdr(&ls, 0);
         linker.collect_dynamic_syms(&ls);
         ldyn.alloc_dynamic_bufs(&ls);
         write_err = writer.write_dynamic_executable(&ls, output_path);
     } else {
+        linker.define_eh_frame_hdr(&ls, writer.eh_frame_hdr_vaddr(&ls));
         reloc.apply_relocations(&ls);
         write_err = writer.write_executable(&ls, output_path);
     }

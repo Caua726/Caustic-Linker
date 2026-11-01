@@ -1092,6 +1092,49 @@ fn synthesize_section_bounds_syms(ls as *LinkerState, gsyms as *GlobalSymTab) as
     return errors;
 }
 
+// `__eh_frame_hdr`: the address of the image's .eh_frame_hdr, or 0 when it has
+// none. Defined by the ELF executable writers before relocation; the program
+// references it only when the compiler's __unwind_tables builtin says so
+// (std/exceptions.cst's backtrace).
+fn _is_eh_hdr_name(name as *u8, len as i32) as i32 {
+    if (len != 14) { return 0; }
+    let is *u8 as w = "__eh_frame_hdr";
+    let is i32 as i with mut = 0;
+    while (i < 14) { if (name[i] != w[i]) { return 0; } i = i + 1; }
+    return 1;
+}
+
+fn _eh_hdr_find(ls as *LinkerState) as *GlobalSym {
+    let is *GlobalSymTab as gsyms = get_gsyms(ls);
+    let is i32 as gi with mut = 0;
+    while (gi < gsyms.count) {
+        let is *GlobalSym as g = gsym_get(gsyms, gi);
+        if (_is_eh_hdr_name(g.name, g.name_len) == 1) { return g; }
+        gi = gi + 1;
+    }
+    return cast(*GlobalSym, 0);
+}
+
+fn define_eh_frame_hdr(ls as *LinkerState, vaddr as i64) as void {
+    let is *GlobalSym as g = _eh_hdr_find(ls);
+    if (cast(i64, g) == 0 || g.defined == 1) { return; }
+    g.section = 0;
+    g.vaddr = vaddr;
+    g.obj_idx = cast(i32, 0 - 1);
+    g.defined = 1;
+}
+
+// The writer's final layout must agree with the address defined earlier.
+fn eh_frame_hdr_sym_check(ls as *LinkerState, vaddr as i64) as i32 {
+    let is *GlobalSym as g = _eh_hdr_find(ls);
+    if (cast(i64, g) == 0 || g.obj_idx >= 0) { return 0; }
+    if (g.vaddr != vaddr) {
+        reader.print_str("error: internal: __eh_frame_hdr layout mismatch\n");
+        return 1;
+    }
+    return 0;
+}
+
 // Validate after the format writer has resolved any synthesized definitions.
 // ELF has its definitions at build_symtab; PE must first assign its helper
 // and IAT addresses. Neither path may relocate an unresolved static symbol.
@@ -1103,7 +1146,10 @@ fn validate_symbols(ls as *LinkerState) as i32 {
         let is *GlobalSym as g = gsym_get(gsyms, gi);
         // PE has already registered genuine IAT slots. A matching prefix
         // alone is not a definition and cannot exempt an unresolved symbol.
-        if (g.defined == 0 && ls.needed_count == 0 && ls.is_shared == 0) {
+        // __eh_frame_hdr is defined later by the ELF executable writers.
+        let is i32 as later with mut = 0;
+        if (tgt.target_get().object_format == 1 && _is_eh_hdr_name(g.name, g.name_len) == 1) { later = 1; }
+        if (g.defined == 0 && later == 0 && ls.needed_count == 0 && ls.is_shared == 0) {
             reader.print_str("error: undefined symbol: ");
             io._write_fd(io.STDERR, g.name, cast(i64, g.name_len));
             reader.print_str("\n");
