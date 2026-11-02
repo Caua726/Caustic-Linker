@@ -92,9 +92,6 @@ fn register_csl_imp_gsyms(ls as *linker.LinkerState, imp_base as i64) as void {
     }
 }
 
-let is i32 as CSE_VERSION with imut = 1;
-let is i32 as CSE_ARCH_X86_64 with imut = 1;
-let is i64 as CSE_PAGE with imut = 4096;
 // Must mirror CSE_MAX_SEGS in causticos/kernel/sys/cse.cst — the loader rejects
 // any image declaring more (rc=-11). Emitting past it produced a .cse that built
 // clean and failed at load, so the writer enforces the same ceiling and says so.

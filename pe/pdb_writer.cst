@@ -63,11 +63,6 @@ fn _u32_le(buf as *u8, off as i64, val as i64) as void {
     buf[off + 3] = cast(u8, (val >> 24) & 255);
 }
 
-fn _u16_le(buf as *u8, off as i64, val as i64) as void {
-    buf[off]     = cast(u8, val & 255);
-    buf[off + 1] = cast(u8, (val >> 8) & 255);
-}
-
 fn _stream_blocks(size as i64) as i64 {
     return (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
 }

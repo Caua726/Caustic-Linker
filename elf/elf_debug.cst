@@ -1380,21 +1380,6 @@ fn _collect_locals(ls as *linker.LinkerState) as void {
     }
 }
 
-// True when at least one object carries .cstdebug (i.e. the build was -g).
-fn debug_present(ls as *linker.LinkerState) as i32 {
-    let is i32 as oi with mut = 0;
-    while (oi < ls.obj_count) {
-        let is *reader.ObjFile as o = linker.get_obj(ls, oi);
-        let is *reader.ObjSection as ds = _find_cstdebug(o);
-        if (cast(i64, ds) != 0 && ds.size >= 16) {
-            let is *u8 as b = ds.data;
-            if (_read_u32_at(b, 0) == dbgproto.CSTDEBUG_MAGIC) { return 1; }
-        }
-        oi = oi + 1;
-    }
-    return 0;
-}
-
 fn debug_loc() as *reader.ByteBuffer { return &_dbg_loc; }
 
 // Build all four DWARF sections into the caller's buffers. Returns 1 if

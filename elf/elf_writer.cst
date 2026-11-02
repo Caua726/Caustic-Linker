@@ -60,7 +60,7 @@ fn write_elf_header(out as *reader.ByteBuffer, e_type as i32, entry as i64,
     reader.buf_emit64_le(out, shdr_off);
     reader.buf_emit32_le(out, 0);
     reader.buf_emit16_le(out, 64);
-    reader.buf_emit16_le(out, 56);
+    reader.buf_emit16_le(out, PHDR_SIZE);
     reader.buf_emit16_le(out, num_phdrs);
     reader.buf_emit16_le(out, 64);
     reader.buf_emit16_le(out, num_shdrs);

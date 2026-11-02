@@ -17,7 +17,6 @@ use "../../src/codegen/target.cst" as tgt;
 // DW_CFA opcodes emitted by the assembler; the CIE's initial instructions are
 // written here directly.
 let is i32 as DW_CFA_def_cfa with imut = 12;
-let is i32 as DW_CFA_offset_rsp_ra with imut = 128;   // 0x80 | 0
 let is i32 as DW_CFA_OFFSET_RA with imut = 144;       // 0x80 | 16 (rip)
 
 fn _u32_at(p as *u8, off as i64) as i64 {
@@ -48,10 +47,6 @@ fn _patch_u32(b as *reader.ByteBuffer, off as i64, val as i64) as void {
     d[off + 1] = cast(u8, (val >> 8) & 255);
     d[off + 2] = cast(u8, (val >> 16) & 255);
     d[off + 3] = cast(u8, (val >> 24) & 255);
-}
-
-fn _align8(b as *reader.ByteBuffer) as void {
-    while ((b.len & 7) != 0) { reader.buf_emit8(b, 0); }
 }
 
 // Entries are packed 4-byte aligned; the pad bytes are DW_CFA_nop (0) and are
