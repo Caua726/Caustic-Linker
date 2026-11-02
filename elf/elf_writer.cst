@@ -386,7 +386,11 @@ fn write_executable(ls as *linker.LinkerState, output_path as *u8) as i32 {
     let is i32 as have_eh with mut = 0;
     let is i64 as eh_foff with mut = 0;
     let is i64 as hdr_foff with mut = 0;
-    if (ehf.cfi_present(ls) == 1) {
+    // No unwind tables in a freestanding image: a kernel or bare-metal
+    // loader (Limine) only takes adjacent non-overlapping PT_LOADs, and the
+    // PT_GNU_EH_FRAME inside the R+X range reads as an overlap. The .eh_frame
+    // bytes stay in their section for debuggers; they are just not loaded.
+    if (ehf.cfi_present(ls) == 1 && ls.freestanding == 0) {
         let is i32 as nf = ehf.cfi_fde_count(ls);
         let is *i64 as fde_pc = cast(*i64, om.opt_alloc(cast(i64, nf + 1) * 8));
         let is *i64 as fde_off = cast(*i64, om.opt_alloc(cast(i64, nf + 1) * 8));
