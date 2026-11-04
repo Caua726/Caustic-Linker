@@ -225,6 +225,7 @@ let is i32 as g_freestanding with mut = 0;
 let is i64 as g_entry_name with mut = 0;   // *u8 or 0 for default ("main")
 let is i64 as g_base_addr with mut = 0;    // 0 = use default (0x400000)
 let is i32 as g_shared with mut = 0;       // 1 = emit shared lib (.so / .dll)
+let is i32 as g_line_layout with mut = 0;  // 1 = LinkState.line_layout
 let is i32 as g_align_funcs with mut = 0;  // >1 = start each function on this boundary
 
 // ============================================================
@@ -334,6 +335,7 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
     if (g_shared == 1) { ls.freestanding = 1; }
     ls.is_shared = g_shared;
     ls.align_funcs = g_align_funcs;
+    ls.line_layout = g_line_layout;
 
     // Store needed libs
     if (lib_count > 0) {
