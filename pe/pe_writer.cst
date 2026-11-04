@@ -1203,7 +1203,8 @@ fn _pe_emit_pdb(ls as *linker.LinkerState, out as *reader.ByteBuffer, debug_guid
     //   struct_indices  — struct ordinal → its pedbg.LF_STRUCTURE TPI index
     //   tm_keys/tm_vals — (kind, extra) → composite-type CV index map
     let is reader.ByteBuffer as tpi_body_buf = reader.buf_init(1024);
-    let is *i32 as proc_indices = cast(*i32, om.opt_alloc(1024 * 4));
+    // One slot per function; build_tpi_body counts them among the gsyms.
+    let is *i32 as proc_indices = cast(*i32, om.opt_alloc(cast(i64, linker.get_gsyms(ls).count + 1) * 4));
     let is *i32 as tpi_struct_indices with mut = cast(*i32, 0);
     let is *i32 as tpi_struct_fwd with mut = cast(*i32, 0);
     let is *i32 as tpi_obj_base with mut = cast(*i32, 0);
