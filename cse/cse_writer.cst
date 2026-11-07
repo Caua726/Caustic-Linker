@@ -179,7 +179,13 @@ fn _cse_import_name(ls as *linker.LinkerState, obj as *reader.ObjFile, rel as *r
     if (sym.name_len <= 0) { return cast(*u8, 0); }
     let is *linker.GlobalSymTab as gsyms = linker.get_gsyms(ls);
     let is i32 as gi = linker.gsym_find(gsyms, sym.name, sym.name_len);
-    if (gi < 0) { return cast(*u8, 0); }
+    if (gi < 0) {
+        // `lea r, [rip+g]` on an undefined g leaves a LOCAL undefined symbol, which
+        // reaches no global table. It is an import when a library exports it.
+        if (sym.section != 0 || dyns.dynsyms_lookup(sym.name, cast(i64, sym.name_len)) < 0) { return cast(*u8, 0); }
+        *out_len = sym.name_len;
+        return sym.name;
+    }
     let is *linker.GlobalSym as g = linker.gsym_get(gsyms, gi);
     if (g.defined == 1) { return cast(*u8, 0); }
     *out_len = sym.name_len;
@@ -291,7 +297,18 @@ fn _imp_intern(nm as *u8, nl as i32) as i64 {
     return _imp_name_count - 1;
 }
 
-fn cse_emit_import_table(out as *reader.ByteBuffer, ls as *linker.LinkerState, n as i32) as void {
+// The address the loader patches for an import, or 0 when this linker has nothing to
+// give it. In .rodata the relocation is not applied here, so the field would hold no
+// addend (relocate.cst handles text, data and custom sections); a site of 0 would
+// patch address zero of the image.
+fn _cse_import_site(ls as *linker.LinkerState, obj as *reader.ObjFile, rel as *reader.ObjReloc) as i64 {
+    if (rel.section == reader.SECIDX_TEXT || rel.section == reader.SECIDX_DATA || rel.section > reader.SECIDX_BSS) {
+        return linker.resolve_sym_vaddr(ls, obj, rel.section, rel.offset);
+    }
+    return 0;
+}
+
+fn cse_emit_import_table(out as *reader.ByteBuffer, ls as *linker.LinkerState, n as i32) as i32 {
     // Pass one: intern every distinct symbol, so the counts in the header are
     // known before anything is written.
     _imp_name_count = 0;
@@ -339,9 +356,13 @@ fn cse_emit_import_table(out as *reader.ByteBuffer, ls as *linker.LinkerState, n
             let is i32 as nl with mut = 0;
             let is *u8 as nm = _cse_import_name(ls, obj, rel, &nl);
             if (cast(i64, nm) != 0) {
-                let is i64 as site with mut = 0;
-                if (rel.section == reader.SECIDX_TEXT) { site = ls.text_vaddr + obj.text_offset + rel.offset; }
-                else if (rel.section == reader.SECIDX_DATA) { site = ls.data_vaddr + obj.data_offset + rel.offset; }
+                let is i64 as site = _cse_import_site(ls, obj, rel);
+                if (site == 0) {
+                    io.print("caustic-ld: error: import of '");
+                    io.print(nm);
+                    io.print("' from a section the loader cannot patch\n");
+                    return 1;
+                }
                 let is i64 as lidx with mut = _cse_import_lib(nm, nl);
                 // An undefined symbol no library claims cannot be written as an
                 // import: the loader would resolve it against nothing. It is
@@ -364,6 +385,7 @@ fn cse_emit_import_table(out as *reader.ByteBuffer, ls as *linker.LinkerState, n
         }
         oi = oi + 1;
     }
+    return 0;
 }
 
 fn cse_emit_cst_v2(out as *reader.ByteBuffer, ls as *linker.LinkerState) as i32 {
@@ -491,7 +513,7 @@ fn cse_emit_cst_v2(out as *reader.ByteBuffer, ls as *linker.LinkerState) as i32 
         reader.buf_emit8(out, 0);
     }
     // Dynamic import table at import_off (CST_ v3).
-    if (imp_n > 0) { cse_emit_import_table(out, ls, imp_n); }
+    if (imp_n > 0 && cse_emit_import_table(out, ls, imp_n) != 0) { return 1; }
     return 0;
 }
 
