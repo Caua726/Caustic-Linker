@@ -133,10 +133,35 @@ fn _name_eq(a as *u8, alen as i32, b as *u8, blen as i32) as i32 {
     return 1;
 }
 
-// Find the CFI opcode stream for `name` across every object's .cstcfi.
-// Returns its length (0 if absent), filling out_ptr/out_len.
-fn _find_cfi(ls as *linker.LinkerState, name as *u8, name_len as i32,
-             out_ptr as **u8, out_len as *i32) as i32 {
+// Every record of every object's .cstcfi, by name; a name in two objects finds
+// the first.
+let is *i64 as _cfi_ptr with mut = cast(*i64, 0);     // record's stream, 0 = free slot
+let is *i32 as _cfi_len with mut = cast(*i32, 0);
+let is *i64 as _cfi_name with mut = cast(*i64, 0);
+let is *i32 as _cfi_nlen with mut = cast(*i32, 0);
+let is i32 as _cfi_cap with mut = 0;
+
+fn _cfi_put(np as *u8, nl as i32, dp as *u8, dl as i32) as void {
+    let is i32 as mask = _cfi_cap - 1;
+    let is i32 as h with mut = cast(i32, linker.name_hash(np, nl) & cast(i64, mask));
+    while (_cfi_name[h] != 0) {
+        if (_name_eq(cast(*u8, _cfi_name[h]), _cfi_nlen[h], np, nl) == 1) { return; }
+        h = (h + 1) & mask;
+    }
+    _cfi_name[h] = cast(i64, np); _cfi_nlen[h] = nl;
+    _cfi_ptr[h] = cast(i64, dp); _cfi_len[h] = dl;
+}
+
+fn _cfi_index(ls as *linker.LinkerState) as void {
+    _cfi_cap = 1024;
+    let is i32 as want = cfi_fde_count(ls) * 2 + 2;
+    while (_cfi_cap < want) { _cfi_cap = _cfi_cap * 2; }
+    _cfi_ptr = cast(*i64, om.opt_alloc(cast(i64, _cfi_cap) * 8));
+    _cfi_name = cast(*i64, om.opt_alloc(cast(i64, _cfi_cap) * 8));
+    _cfi_len = linker.zeroed_i32s(_cfi_cap);
+    _cfi_nlen = linker.zeroed_i32s(_cfi_cap);
+    let is i32 as z with mut = 0;
+    while (z < _cfi_cap) { _cfi_ptr[z] = 0; _cfi_name[z] = 0; z = z + 1; }
     let is i32 as oi with mut = 0;
     while (oi < ls.obj_count) {
         let is *reader.ObjFile as o = linker.get_obj(ls, oi);
@@ -153,16 +178,27 @@ fn _find_cfi(ls as *linker.LinkerState, name as *u8, name_len as i32,
                 cur = cur + nl;
                 let is i64 as dl = _u32_at(p, cur); cur = cur + 4;
                 if (cur + dl > ss.size) { k = n; continue; }
-                if (cast(i32, nl) == name_len && _name_eq(np, cast(i32, nl), name, name_len) == 1) {
-                    *out_ptr = cast(*u8, cast(i64, p) + cur);
-                    *out_len = cast(i32, dl);
-                    return 1;
-                }
+                _cfi_put(np, cast(i32, nl), cast(*u8, cast(i64, p) + cur), cast(i32, dl));
                 cur = cur + dl;
                 k = k + 1;
             }
         }
         oi = oi + 1;
+    }
+}
+
+// The CFI opcode stream for `name`. Returns 1 when it has a record, filling
+// out_ptr/out_len.
+fn _find_cfi(name as *u8, name_len as i32, out_ptr as **u8, out_len as *i32) as i32 {
+    let is i32 as mask = _cfi_cap - 1;
+    let is i32 as h with mut = cast(i32, linker.name_hash(name, name_len) & cast(i64, mask));
+    while (_cfi_name[h] != 0) {
+        if (_name_eq(cast(*u8, _cfi_name[h]), _cfi_nlen[h], name, name_len) == 1) {
+            *out_ptr = cast(*u8, _cfi_ptr[h]);
+            *out_len = _cfi_len[h];
+            return 1;
+        }
+        h = (h + 1) & mask;
     }
     return 0;
 }
@@ -220,13 +256,14 @@ fn build_eh_frame(ls as *linker.LinkerState, out as *reader.ByteBuffer,
     _sort_gsym_idx(idx, va, cnt);
     let is i64 as text_end = ls.text_vaddr + ls.text_size;
 
+    _cfi_index(ls);
     let is i32 as nfde with mut = 0;
     let is i32 as f with mut = 0;
     while (f < cnt) {
         let is *linker.GlobalSym as g = linker.gsym_get(gsyms, idx[f]);
         let is *u8 as cfi_ptr with mut = cast(*u8, 0);
         let is i32 as cfi_len with mut = 0;
-        if (_find_cfi(ls, g.name, g.name_len, &cfi_ptr, &cfi_len) == 1 && cfi_len > 0) {
+        if (_find_cfi(g.name, g.name_len, &cfi_ptr, &cfi_len) == 1 && cfi_len > 0) {
             let is i64 as begin = g.vaddr;
             let is i64 as fin with mut = text_end;
             if (f + 1 < cnt) { fin = va[f + 1]; }

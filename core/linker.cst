@@ -28,6 +28,26 @@ struct GlobalSymTab {
     data as *u8;
     count as i32;
     cap as i32;
+    index as *i32;      // open addressing: 1 + the first symbol of each name, 0 = free
+    index_cap as i32;   // a power of two, at most half full
+}
+
+// FNV-1a of a symbol name. These names share long prefixes, so all of it counts.
+fn name_hash(name as *u8, name_len as i32) as i64 {
+    let is u64 as h with mut = cast(u64, 14695981039346656037);
+    let is i32 as i with mut = 0;
+    while (i < name_len) {
+        h = (h ^ cast(u64, name[i])) * cast(u64, 1099511628211);
+        i = i + 1;
+    }
+    return cast(i64, h ^ (h >> 32));
+}
+
+fn zeroed_i32s(n as i32) as *i32 {
+    let is *i32 as a = cast(*i32, om.opt_alloc(cast(i64, n) * 4));
+    let is i32 as i with mut = 0;
+    while (i < n) { a[i] = 0; i = i + 1; }
+    return a;
 }
 
 fn gsym_init() as GlobalSymTab {
@@ -35,7 +55,16 @@ fn gsym_init() as GlobalSymTab {
     st.cap = 256;
     st.data = om.opt_alloc(cast(i64, st.cap) * sizeof(GlobalSym));
     st.count = 0;
+    st.index_cap = 1024;
+    st.index = zeroed_i32s(st.index_cap);
     return st;
+}
+
+// Empty again: what a second symbol pass starts from.
+fn gsym_clear(st as *GlobalSymTab) as void {
+    st.count = 0;
+    let is i32 as i with mut = 0;
+    while (i < st.index_cap) { st.index[i] = 0; i = i + 1; }
 }
 
 fn gsym_get(st as *GlobalSymTab, idx as i32) as *GlobalSym {
@@ -43,15 +72,28 @@ fn gsym_get(st as *GlobalSymTab, idx as i32) as *GlobalSym {
 }
 
 fn gsym_find(st as *GlobalSymTab, name as *u8, name_len as i32) as i32 {
-    let is i32 as i with mut = 0;
-    while (i < st.count) {
+    let is i32 as mask = st.index_cap - 1;
+    let is i32 as h with mut = cast(i32, name_hash(name, name_len) & cast(i64, mask));
+    while (st.index[h] != 0) {
+        let is i32 as i = st.index[h] - 1;
         let is *GlobalSym as g = gsym_get(st, i);
-        if (reader.streq(g.name, g.name_len, name, name_len) == 1) {
-            return i;
-        }
-        i = i + 1;
+        if (reader.streq(g.name, g.name_len, name, name_len) == 1) { return i; }
+        h = (h + 1) & mask;
     }
     return cast(i32, 0 - 1);
+}
+
+// Index symbol i unless its name is already there: a lookup finds the first.
+fn _gsym_index_put(st as *GlobalSymTab, i as i32) as void {
+    let is *GlobalSym as g = gsym_get(st, i);
+    let is i32 as mask = st.index_cap - 1;
+    let is i32 as h with mut = cast(i32, name_hash(g.name, g.name_len) & cast(i64, mask));
+    while (st.index[h] != 0) {
+        let is *GlobalSym as o = gsym_get(st, st.index[h] - 1);
+        if (reader.streq(o.name, o.name_len, g.name, g.name_len) == 1) { return; }
+        h = (h + 1) & mask;
+    }
+    st.index[h] = i + 1;
 }
 
 fn gsym_add(st as *GlobalSymTab, name as *u8, name_len as i32, section as i32,
@@ -72,6 +114,15 @@ fn gsym_add(st as *GlobalSymTab, name as *u8, name_len as i32, section as i32,
     g.obj_idx = obj_idx;
     g.defined = defined;
     st.count = st.count + 1;
+    if (st.count * 2 > st.index_cap) {
+        om.opt_free(cast(*u8, st.index));
+        st.index_cap = st.index_cap * 2;
+        st.index = zeroed_i32s(st.index_cap);
+        let is i32 as k with mut = 0;
+        while (k < st.count) { _gsym_index_put(st, k); k = k + 1; }
+    } else {
+        _gsym_index_put(st, st.count - 1);
+    }
     return st.count - 1;
 }
 
@@ -190,6 +241,8 @@ fn linker_init(base_addr as i64) as LinkerState {
     gst.data = tmp_gs.data;
     gst.count = tmp_gs.count;
     gst.cap = tmp_gs.cap;
+    gst.index = tmp_gs.index;
+    gst.index_cap = tmp_gs.index_cap;
     ls.gsyms = gs;
     ls.objs = cast(*u8, 0);
     ls.obj_count = 0;
@@ -426,6 +479,8 @@ let is *i32 as ds_edge_src with mut;
 let is *i32 as ds_edge_dst with mut;
 let is i32 as ds_edge_count with mut;
 let is i32 as ds_edge_cap with mut;
+let is *i32 as ds_index with mut;      // 1 + the first function of each name, 0 = free
+let is i32 as ds_index_cap with mut;
 
 fn ds_f(idx as i32) as *DeadStripFunc {
     return cast(*DeadStripFunc, cast(i64, ds_funcs) + cast(i64, idx) * sizeof(DeadStripFunc));
@@ -439,25 +494,52 @@ fn ds_name_eq(a as *u8, alen as i32, b as *u8, blen as i32) as i32 {
 
 // Resolve a callee by name across all objs. -1 if not a known .text function.
 fn ds_find_name(name as *u8, name_len as i32) as i32 {
-    let is i32 as i with mut = 0;
-    while (i < ds_count) {
-        let is *DeadStripFunc as f = ds_f(i);
-        if (ds_name_eq(f.name, f.name_len, name, name_len) == 1) { return i; }
-        i = i + 1;
+    let is i32 as mask = ds_index_cap - 1;
+    let is i32 as h with mut = cast(i32, name_hash(name, name_len) & cast(i64, mask));
+    while (ds_index[h] != 0) {
+        let is *DeadStripFunc as f = ds_f(ds_index[h] - 1);
+        if (ds_name_eq(f.name, f.name_len, name, name_len) == 1) { return ds_index[h] - 1; }
+        h = (h + 1) & mask;
     }
     return cast(i32, 0 - 1);
 }
 
+// In order, so a name defined twice finds its first definition.
+fn ds_build_index() as void {
+    ds_index_cap = 1024;
+    while (ds_index_cap < ds_count * 2 + 2) { ds_index_cap = ds_index_cap * 2; }
+    ds_index = zeroed_i32s(ds_index_cap);
+    let is i32 as mask = ds_index_cap - 1;
+    let is i32 as i with mut = 0;
+    while (i < ds_count) {
+        let is *DeadStripFunc as f = ds_f(i);
+        let is i32 as h with mut = cast(i32, name_hash(f.name, f.name_len) & cast(i64, mask));
+        let is i32 as seen with mut = 0;
+        while (ds_index[h] != 0 && seen == 0) {
+            let is *DeadStripFunc as o = ds_f(ds_index[h] - 1);
+            if (ds_name_eq(o.name, o.name_len, f.name, f.name_len) == 1) { seen = 1; }
+            else { h = (h + 1) & mask; }
+        }
+        if (seen == 0) { ds_index[h] = i + 1; }
+        i = i + 1;
+    }
+}
+
 // Which func in obj `oi` contains text offset `off`? -1 if none.
 fn ds_find_site(oi as i32, off as i64) as i32 {
-    let is i32 as s = ds_obj_start[oi];
-    let is i32 as c = ds_obj_cnt[oi];
-    let is i32 as j with mut = s;
-    while (j < s + c) {
-        let is *DeadStripFunc as f = ds_f(j);
-        if (off >= f.rstart && off < f.rend) { return j; }
-        j = j + 1;
+    // The ranges of one object are in order and touch. Functions at one address
+    // leave all but the last with an empty range, so the last range starting at
+    // or before off is the only one that can hold it.
+    let is i32 as lo with mut = ds_obj_start[oi];
+    let is i32 as hi with mut = lo + ds_obj_cnt[oi];
+    let is i32 as first = lo;
+    while (lo < hi) {
+        let is i32 as m = lo + (hi - lo) / 2;
+        if (ds_f(m).rstart <= off) { lo = m + 1; } else { hi = m; }
     }
+    if (lo == first) { return cast(i32, 0 - 1); }
+    let is *DeadStripFunc as f = ds_f(lo - 1);
+    if (off >= f.rstart && off < f.rend) { return lo - 1; }
     return cast(i32, 0 - 1);
 }
 
@@ -529,6 +611,8 @@ fn dead_strip(ls as *LinkerState) as void {
         }
         oi = oi + 1;
     }
+
+    ds_build_index();
 
     // Phase 2: mark entry root + build edges / external-reference roots.
     let is i32 as eidx = ds_find_name(ls.entry_name, reader.cstrlen(ls.entry_name));

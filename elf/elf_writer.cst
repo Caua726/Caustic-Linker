@@ -1182,7 +1182,7 @@ fn write_dynamic_executable(ls as *linker.LinkerState, output_path as *u8) as i3
 
     // Rebuild global symbol table with new addresses
     let is *linker.GlobalSymTab as gsyms = linker.get_gsyms(ls);
-    gsyms.count = 0;
+    linker.gsym_clear(gsyms);
     let is i32 as sym_err = linker.build_symtab(ls);
     if (sym_err != 0) { return 1; }
 
