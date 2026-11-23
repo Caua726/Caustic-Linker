@@ -3,6 +3,7 @@ use "../../std/io.cst" as io;
 use "../../src/ir/opt_mem.cst" as om;
 use "../../src/codegen/target.cst" as tgt;
 use "../readers/elf_reader.cst" as reader;
+use "../../src/debug_proto.cst" as dbgproto;
 
 // ============================================================
 // linker.cst — Core linking logic
@@ -543,6 +544,85 @@ fn ds_find_site(oi as i32, off as i64) as i32 {
     return cast(i32, 0 - 1);
 }
 
+// Where text offset `off` of obj `oi` is after the repack; -1 in a dead function.
+fn ds_remap_off(oi as i32, off as i64) as i64 {
+    let is i32 as fi = ds_find_site(oi, off);
+    if (fi < 0) { return off; }
+    let is *DeadStripFunc as f = ds_f(fi);
+    if (f.live == 1) { return f.new_start + (off - f.rstart); }
+    return 0 - 1;
+}
+
+fn ds_put_u32(b as *u8, off as i64, v as i64) as void {
+    b[off] = cast(u8, v & 255);
+    b[off + 1] = cast(u8, (v >> 8) & 255);
+    b[off + 2] = cast(u8, (v >> 16) & 255);
+    b[off + 3] = cast(u8, (v >> 24) & 255);
+}
+
+// The rows of `.cstdebug` (and the prologue ends after them) are text offsets
+// in the object as the assembler wrote it. The repack moves every function it
+// keeps, to its new place and past the padding align_funcs puts before it, so
+// the rows move with it as the relocations do, and a dead function's rows go.
+// Before, every function after the first had its rows where the padding began:
+// at -O2 a breakpoint on one found no line, and gdb ran past it.
+fn ds_remap_cstdebug(oi as i32, obj as *reader.ObjFile) as void {
+    let is *i64 as names = cast(*i64, obj.csec_names);
+    let is *i32 as nlens = cast(*i32, obj.csec_name_lens);
+    let is *reader.ObjSection as ds with mut = cast(*reader.ObjSection, 0);
+    let is i32 as i with mut = 0;
+    while (i < obj.csec_count) {
+        if (nlens[i] == 9 && reader.streq(cast(*u8, names[i]), 9, ".cstdebug", 9) == 1) {
+            ds = cast(*reader.ObjSection,
+                cast(i64, obj.csec_data) + cast(i64, i) * sizeof(reader.ObjSection));
+        }
+        i = i + 1;
+    }
+    if (cast(i64, ds) == 0 || ds.size < 16) { return; }
+    let is *u8 as db = ds.data;
+    if (read_u32_le(db, 0) != dbgproto.CSTDEBUG_MAGIC) { return; }
+    // u32 magic, u32 reserved, u32 path length, the path, padding to 4, u32 count,
+    // count x (u32 offset, u32 line), then u32 count and that many u32 offsets.
+    let is i64 as lo with mut = 12 + read_u32_le(db, 8);
+    while ((lo & 3) != 0) { lo = lo + 1; }
+    if (lo + 4 > ds.size) { return; }
+    let is i64 as n = read_u32_le(db, lo);
+    if (lo + 4 + n * 8 > ds.size) { return; }
+    let is *u8 as nb = om.opt_alloc(ds.size);
+    mem.memcpy(nb, db, lo);
+    let is i64 as w with mut = lo + 4;
+    let is i64 as kept with mut = 0;
+    let is i64 as off with mut = 0;
+    let is i64 as k with mut = 0;
+    while (k < n) {
+        off = ds_remap_off(oi, read_u32_le(db, lo + 4 + k * 8));
+        if (off >= 0) {
+            ds_put_u32(nb, w, off);
+            ds_put_u32(nb, w + 4, read_u32_le(db, lo + 4 + k * 8 + 4));
+            w = w + 8;
+            kept = kept + 1;
+        }
+        k = k + 1;
+    }
+    ds_put_u32(nb, lo, kept);
+    let is i64 as pb = lo + 4 + n * 8;
+    if (pb + 4 <= ds.size) {
+        let is i64 as np = read_u32_le(db, pb);
+        let is i64 as wc = w;
+        w = w + 4;
+        kept = 0;
+        k = 0;
+        while (k < np && pb + 4 + k * 4 + 4 <= ds.size) {
+            off = ds_remap_off(oi, read_u32_le(db, pb + 4 + k * 4));
+            if (off >= 0) { ds_put_u32(nb, w, off); w = w + 4; kept = kept + 1; }
+            k = k + 1;
+        }
+        ds_put_u32(nb, wc, kept);
+    }
+    ds.data = nb;
+    ds.size = w;
+}
+
 fn dead_strip(ls as *LinkerState) as void {
     let is i32 as nobj = ls.obj_count;
     if (nobj <= 0) { return; }
@@ -757,6 +837,7 @@ fn dead_strip(ls as *LinkerState) as void {
             obj.reloc_count = wi;
             obj.text.data = nt;
             obj.text.size = total;
+            ds_remap_cstdebug(oi, obj);
         }
         oi = oi + 1;
     }
