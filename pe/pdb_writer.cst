@@ -1,3 +1,4 @@
+use "pdb_files.cst" as pf;
 use "../../std/io.cst" as io;
 use "../../src/ir/opt_mem.cst" as om;
 use "../readers/elf_reader.cst" as reader;
@@ -155,18 +156,25 @@ fn _build_stream_dir(sizes as *i64, n as i32, blocks as *i64, addr_base as i64) 
 
 // === Stream 1: PDB Info ===
 
-fn _emit_pdb_info(b as *reader.ByteBuffer, guid as *u8) as void {
+fn _emit_pdb_info(b as *reader.ByteBuffer, guid as *u8, names_stream as i32) as void {
     reader.buf_emit32_le(b, PDBImpvVC70);       // Version
     reader.buf_emit32_le(b, 0);                 // Signature
     reader.buf_emit32_le(b, 1);                 // Age
     let is i32 as g with mut = 0;
     while (g < 16) { reader.buf_emit8(b, cast(i32, guid[g])); g = g + 1; }
-    // NamedStreamMap: empty. llvm-pdbutil rejects Capacity == 0, so use 1.
-    reader.buf_emit32_le(b, 0);                 // StringBufferSize
-    reader.buf_emit32_le(b, 0);                 // HashTable.Size
-    reader.buf_emit32_le(b, 1);                 // HashTable.Capacity
-    reader.buf_emit32_le(b, 0);                 // PresentBitVec.NumWords
+    // NamedStreamMap: one entry, "/names". A string buffer, then a hash table
+    // keyed by the string's offset (the low 16 bits of its hash pick the
+    // bucket) whose value is the stream.
+    reader.buf_emit32_le(b, 7);                 // StringBufferSize
+    reader.buf_append(b, "/names", 7);
+    let is i64 as bucket = (pf.hash_v1("/names", 6) & 65535) % 8;
+    reader.buf_emit32_le(b, 1);                 // HashTable.Size
+    reader.buf_emit32_le(b, 8);                 // HashTable.Capacity
+    reader.buf_emit32_le(b, 1);                 // PresentBitVec.NumWords
+    reader.buf_emit32_le(b, cast(i64, 1) << bucket);
     reader.buf_emit32_le(b, 0);                 // DeletedBitVec.NumWords
+    reader.buf_emit32_le(b, 0);                 // key: offset of "/names"
+    reader.buf_emit32_le(b, cast(i64, names_stream));
     reader.buf_emit32_le(b, 20140508);          // FeatureCode (VC110)
 }
 
@@ -222,7 +230,7 @@ fn _emit_section_contrib(b as *reader.ByteBuffer, text_size as i32) as void {
 
 fn _emit_dbi(b as *reader.ByteBuffer, mod_names as *i64, mod_name_lens as *i32,
              n_modules as i32, mod_sym_sizes as *i32, mod_c13_sizes as *i32,
-             text_size as i32) as void {
+             mod_file_start as *i32, text_size as i32) as void {
     // Reserve the 64-byte header; fill substreams, then patch the header.
     // We build the body in a scratch buffer so the header size fields can be
     // computed cleanly.
@@ -254,7 +262,7 @@ fn _emit_dbi(b as *reader.ByteBuffer, mod_names as *i64, mod_name_lens as *i32,
         reader.buf_emit32_le(&body, cast(i64, mod_sym_sizes[mi]));  // SymByteSize
         reader.buf_emit32_le(&body, 0);                          // C11ByteSize
         reader.buf_emit32_le(&body, cast(i64, mod_c13_sizes[mi]));  // C13ByteSize
-        reader.buf_emit16_le(&body, 1);                          // SourceFileCount (one source per module)
+        reader.buf_emit16_le(&body, mod_file_start[mi + 1] - mod_file_start[mi]);   // SourceFileCount
         reader.buf_emit16_le(&body, 0);                          // padding
         reader.buf_emit32_le(&body, 0);                          // unused2
         reader.buf_emit32_le(&body, cast(i64, ec_offs[mi]));     // SourceFileNameIdx
@@ -277,19 +285,25 @@ fn _emit_dbi(b as *reader.ByteBuffer, mod_names as *i64, mod_name_lens as *i32,
     let is i64 as sc_size = body.len - sc_start;
 
     // === SourceInfo substream ===
-    // One source file per module. The module's file list is what makes
-    // `llvm-pdbutil` (and a debugger) attribute a source to the compiland;
-    // FileNameOffsets[i] is the offset of the name in the module's own string
-    // table (1 — past the leading empty string).
+    // The files of each module, and their names: what makes a debugger
+    // attribute sources to compilands. FileNameOffsets are into the names
+    // buffer at the end (not /names).
     let is i64 as si_start = body.len;
+    let is i32 as nfiles = mod_file_start[n_modules];
     reader.buf_emit16_le(&body, n_modules);                  // NumModules
-    reader.buf_emit16_le(&body, n_modules);                  // NumSourceFiles
+    reader.buf_emit16_le(&body, nfiles & 65535);             // NumSourceFiles (readers sum the counts)
     let is i32 as si with mut = 0;
-    while (si < n_modules) { reader.buf_emit16_le(&body, si); si = si + 1; }  // ModIndices
+    while (si < n_modules) { reader.buf_emit16_le(&body, mod_file_start[si] & 65535); si = si + 1; }   // ModIndices
     si = 0;
-    while (si < n_modules) { reader.buf_emit16_le(&body, 1); si = si + 1; }              // ModFileCounts
+    while (si < n_modules) { reader.buf_emit16_le(&body, mod_file_start[si + 1] - mod_file_start[si]); si = si + 1; }
     si = 0;
-    while (si < n_modules) { reader.buf_emit32_le(&body, 1); si = si + 1; }              // FileNameOffsets
+    while (si < nfiles) { reader.buf_emit32_le(&body, cast(i64, pf.f_off[pf.m_file[si]] - 1)); si = si + 1; }
+    si = 0;
+    while (si < pf.f_count) {
+        reader.buf_append(&body, cast(*u8, pf.f_ptr[si]), cast(i64, pf.f_len[si]));
+        reader.buf_emit8(&body, 0);
+        si = si + 1;
+    }
     while ((body.len & 3) != 0) { reader.buf_emit8(&body, 0); }
     let is i64 as si_size = body.len - si_start;
 
@@ -391,14 +405,14 @@ fn write_pdb(pdb_path as *u8, guid as *u8,
              mod_blobs as *i64, mod_sizes as *i32,
              mod_names as *i64, mod_name_lens as *i32,
              mod_sym_sizes as *i32, mod_c13_sizes as *i32,
-             n_modules as i32,
+             mod_file_start as *i32, n_modules as i32,
              text_size as i32,
              ipi_body as *u8, ipi_body_size as i32,
              ipi_num_funcs as i32,
              tpi_body as *u8, tpi_body_size as i32,
              tpi_num_types as i32) as i32 {
-    // One stream per module, after the eight fixed ones (0..7).
-    let is i32 as nstreams = 8 + n_modules;
+    // One stream per module after the eight fixed ones (0..7), then /names.
+    let is i32 as nstreams = 9 + n_modules;
     // Build every stream into its own buffer.
     let is reader.ByteBuffer as s0    = reader.buf_init(1);
     let is reader.ByteBuffer as s_info = reader.buf_init(128);
@@ -409,10 +423,12 @@ fn write_pdb(pdb_path as *u8, guid as *u8,
     let is reader.ByteBuffer as s_sym  = reader.buf_init(cast(i64, symrec_size) + 1);
     let is reader.ByteBuffer as s_pub  = reader.buf_init(cast(i64, publics_size) + 1);
 
-    _emit_pdb_info(&s_info, guid);
+    _emit_pdb_info(&s_info, guid, 8 + n_modules);
+    let is reader.ByteBuffer as s_names = reader.buf_init(cast(i64, pf.f_bytes) * 2 + 64);
+    pf.emit_names(&s_names);
     _emit_tpi(&s_tpi, tpi_body, tpi_body_size, tpi_num_types);
     _emit_dbi(&s_dbi, mod_names, mod_name_lens, n_modules,
-              mod_sym_sizes, mod_c13_sizes, text_size);
+              mod_sym_sizes, mod_c13_sizes, mod_file_start, text_size);
     _emit_ipi(&s_ipi, ipi_body, ipi_body_size, ipi_num_funcs);
     _emit_section_headers(&s_sect, secthdr, n_sections);
     _append_blob(&s_sym, symrec_bytes, symrec_size);
@@ -429,6 +445,7 @@ fn write_pdb(pdb_path as *u8, guid as *u8,
     sizes[7] = s_pub.len;
     let is i32 as msi with mut = 0;
     while (msi < n_modules) { sizes[8 + msi] = cast(i64, mod_sizes[msi]); msi = msi + 1; }
+    sizes[8 + n_modules] = s_names.len;
 
     // Per-stream block counts and starting block (relative to streams_start).
     let is *i64 as blocks = cast(*i64, om.opt_alloc(cast(i64, nstreams) * 8));
@@ -483,6 +500,7 @@ fn write_pdb(pdb_path as *u8, guid as *u8,
         else if (i == 5) { src = s_sect.data; }
         else if (i == 6) { src = s_sym.data; }
         else if (i == 7) { src = s_pub.data; }
+        else if (i == 8 + n_modules) { src = s_names.data; }
         else if (i >= 8) { src = cast(*u8, mod_blobs[i - 8]); }
         if (cast(i64, src) != 0 && sz > 0) {
             let is i64 as cap = blocks[i] * BLOCK_SIZE;

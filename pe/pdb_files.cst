@@ -1,0 +1,111 @@
+// The source files a PDB names: the /names stream every module's FILECHKSMS
+// points into, and which files each module has. Filled by build_module_stream
+// (pe_debug.cst) module by module, written by pdb_writer.cst.
+use "../../std/mem.cst" as mem;
+use "../../src/ir/opt_mem.cst" as om;
+use "../readers/elf_reader.cst" as reader;
+
+let is *i64 as f_ptr with mut = cast(*i64, 0);     // a file's path (not NUL-terminated)
+let is *i32 as f_len with mut;
+let is *i32 as f_off with mut;                     // its offset in /names
+let is i32 as f_count with mut = 0;
+let is i32 as f_cap with mut = 0;
+let is i32 as f_bytes with mut = 1;                // the leading empty string
+
+let is *i32 as m_file with mut = cast(*i32, 0);    // module lists of file indices, one after another
+let is i32 as m_count with mut = 0;
+let is i32 as m_cap with mut = 0;
+let is i32 as m_start with mut = 0;                // where the current module's list begins
+
+fn reset() as void {
+    f_count = 0; f_bytes = 1; m_count = 0; m_start = 0;
+}
+
+fn _file(p as *u8, n as i32) as i32 {
+    let is i32 as i with mut = f_count - 1;
+    while (i >= 0) {
+        if (f_len[i] == n && reader.streq(cast(*u8, f_ptr[i]), n, p, n) == 1) { return i; }
+        i = i - 1;
+    }
+    if (f_count >= f_cap) {
+        let is i32 as nc with mut = f_cap * 2;
+        if (nc < 64) { nc = 64; }
+        let is *i64 as np = cast(*i64, om.opt_alloc(cast(i64, nc) * 8));
+        let is *i32 as nl = cast(*i32, om.opt_alloc(cast(i64, nc) * 4));
+        let is *i32 as no = cast(*i32, om.opt_alloc(cast(i64, nc) * 4));
+        if (f_count > 0) {
+            mem.memcpy(cast(*u8, np), cast(*u8, f_ptr), cast(i64, f_count) * 8);
+            mem.memcpy(cast(*u8, nl), cast(*u8, f_len), cast(i64, f_count) * 4);
+            mem.memcpy(cast(*u8, no), cast(*u8, f_off), cast(i64, f_count) * 4);
+        }
+        f_ptr = np; f_len = nl; f_off = no; f_cap = nc;
+    }
+    f_ptr[f_count] = cast(i64, p); f_len[f_count] = n; f_off[f_count] = f_bytes;
+    f_bytes = f_bytes + n + 1;
+    f_count = f_count + 1;
+    return f_count - 1;
+}
+
+fn module_begin() as void { m_start = m_count; }
+
+// The file's ordinal in the current module.
+fn module_file(p as *u8, n as i32) as i32 {
+    let is i32 as f = _file(p, n);
+    let is i32 as i with mut = m_start;
+    while (i < m_count) { if (m_file[i] == f) { return i - m_start; } i = i + 1; }
+    if (m_count >= m_cap) {
+        let is i32 as nc with mut = m_cap * 2;
+        if (nc < 64) { nc = 64; }
+        let is *i32 as nm = cast(*i32, om.opt_alloc(cast(i64, nc) * 4));
+        if (m_count > 0) { mem.memcpy(cast(*u8, nm), cast(*u8, m_file), cast(i64, m_count) * 4); }
+        m_file = nm; m_cap = nc;
+    }
+    m_file[m_count] = f;
+    m_count = m_count + 1;
+    return m_count - 1 - m_start;
+}
+
+// Microsoft's hashStringV1 (PDB /names and the named stream map).
+fn hash_v1(p as *u8, n as i32) as i64 {
+    let is i64 as h with mut = 0;
+    let is i32 as i with mut = 0;
+    while (i + 4 <= n) {
+        h = h ^ (cast(i64, p[i]) | (cast(i64, p[i + 1]) << 8) | (cast(i64, p[i + 2]) << 16) | (cast(i64, p[i + 3]) << 24));
+        i = i + 4;
+    }
+    if (n - i >= 2) { h = h ^ (cast(i64, p[i]) | (cast(i64, p[i + 1]) << 8)); i = i + 2; }
+    if (n - i == 1) { h = h ^ cast(i64, p[i]); }
+    h = (h | 538976288) & 4294967295;              // 0x20202020
+    h = h ^ (h >> 11);
+    return h ^ (h >> 16);
+}
+
+// The /names stream: header, strings, hash buckets of string offsets, count.
+fn emit_names(b as *reader.ByteBuffer) as void {
+    reader.buf_emit32_le(b, 4026462206);           // 0xEFFEEFFE
+    reader.buf_emit32_le(b, 1);                    // hash version
+    reader.buf_emit32_le(b, cast(i64, f_bytes));
+    reader.buf_emit8(b, 0);
+    let is i32 as i with mut = 0;
+    while (i < f_count) {
+        reader.buf_append(b, cast(*u8, f_ptr[i]), cast(i64, f_len[i]));
+        reader.buf_emit8(b, 0);
+        i = i + 1;
+    }
+    let is i32 as nb = f_count * 2 + 1;
+    let is *i32 as ids = cast(*i32, om.opt_alloc(cast(i64, nb) * 4));
+    i = 0;
+    while (i < nb) { ids[i] = 0; i = i + 1; }
+    i = 0;
+    while (i < f_count) {
+        let is i64 as k with mut = hash_v1(cast(*u8, f_ptr[i]), f_len[i]) % cast(i64, nb);
+        while (ids[k] != 0) { k = k + 1; if (k >= cast(i64, nb)) { k = 0; } }
+        ids[k] = f_off[i];
+        i = i + 1;
+    }
+    reader.buf_emit32_le(b, cast(i64, nb));
+    i = 0;
+    while (i < nb) { reader.buf_emit32_le(b, cast(i64, ids[i])); i = i + 1; }
+    reader.buf_emit32_le(b, cast(i64, f_count));
+    om.opt_free(cast(*u8, ids));
+}

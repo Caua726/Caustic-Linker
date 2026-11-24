@@ -3,6 +3,7 @@ use "../../src/ir/opt_mem.cst" as om;
 use "../readers/elf_reader.cst" as reader;
 use "../core/linker.cst" as linker;
 use "../core/relocate.cst" as crel;
+use "pdb_files.cst" as pf;
 use "pdb_writer.cst" as pdbw;
 use "pe_debug.cst" as pedbg;
 use "pe_imports.cst" as imp;
@@ -1225,6 +1226,8 @@ fn _pe_emit_pdb(ls as *linker.LinkerState, out as *reader.ByteBuffer, debug_guid
     let is *i32 as mod_name_lens = cast(*i32, om.opt_alloc(cast(i64, ls.obj_count + 1) * 4));
     let is *i32 as mod_sym_sizes = cast(*i32, om.opt_alloc(cast(i64, ls.obj_count + 1) * 4));
     let is *i32 as mod_c13_sizes = cast(*i32, om.opt_alloc(cast(i64, ls.obj_count + 1) * 4));
+    let is *i32 as mod_file_start = cast(*i32, om.opt_alloc(cast(i64, ls.obj_count + 2) * 4));
+    pf.reset();
     let is i32 as n_modules with mut = 0;
     let is *u8 as first_src with mut = cast(*u8, 0);
     let is i32 as first_src_len with mut = 0;
@@ -1235,12 +1238,13 @@ fn _pe_emit_pdb(ls as *linker.LinkerState, out as *reader.ByteBuffer, debug_guid
         let is i32 as m_src_len with mut = 0;
         let is i32 as m_sym with mut = 0;
         let is i32 as m_c13 with mut = 0;
+        pf.module_begin();
         let is i32 as got = pedbg.build_module_stream(ls, moi, text_section_va, &mbuf,
                             &m_src, &m_src_len, &m_sym, &m_c13,
                             tpi_struct_indices, tpi_num_structs,
                             tpi_tm_keys, tpi_tm_vals, tpi_tm_count,
                             tpi_obj_base);
-        if (got == 0 || m_src_len == 0) { moi = moi + 1; continue; }
+        if (got == 0 || m_src_len == 0) { pf.m_count = pf.m_start; moi = moi + 1; continue; }
         if (first_src_len == 0) { first_src = m_src; first_src_len = m_src_len; }
         mod_blobs[n_modules] = cast(i64, mbuf.data);
         mod_sizes[n_modules] = cast(i32, mbuf.len);
@@ -1248,9 +1252,12 @@ fn _pe_emit_pdb(ls as *linker.LinkerState, out as *reader.ByteBuffer, debug_guid
         mod_name_lens[n_modules] = m_src_len;
         mod_sym_sizes[n_modules] = m_sym;
         mod_c13_sizes[n_modules] = m_c13;
+        mod_file_start[n_modules] = pf.m_start;
         n_modules = n_modules + 1;
         moi = moi + 1;
     }
+
+    mod_file_start[n_modules] = pf.m_count;
 
     let is reader.ByteBuffer as ipi_body_buf = reader.buf_init(1024);
     let is i32 as ipi_num_records = pedbg.build_ipi_body(ls, &ipi_body_buf,
@@ -1266,7 +1273,7 @@ fn _pe_emit_pdb(ls as *linker.LinkerState, out as *reader.ByteBuffer, debug_guid
                    mod_blobs, mod_sizes,
                    mod_names, mod_name_lens,
                    mod_sym_sizes, mod_c13_sizes,
-                   n_modules,
+                   mod_file_start, n_modules,
                    cast(i32, ls.text_size + stub_size),
                    ipi_body_buf.data, cast(i32, ipi_body_buf.len),
                    ipi_num_records,
