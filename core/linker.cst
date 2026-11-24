@@ -547,6 +547,91 @@ fn ds_find_site(oi as i32, off as i64) as i32 {
     return cast(i32, 0 - 1);
 }
 
+// The object's .cstdebug, or 0.
+fn _ds_cstdebug(obj as *reader.ObjFile) as *reader.ObjSection {
+    let is *i64 as names = cast(*i64, obj.csec_names);
+    let is *i32 as nlens = cast(*i32, obj.csec_name_lens);
+    let is i32 as i with mut = 0;
+    while (i < obj.csec_count) {
+        if (nlens[i] == 9 && reader.streq(cast(*u8, names[i]), 9, ".cstdebug", 9) == 1) {
+            return cast(*reader.ObjSection, cast(i64, obj.csec_data) + cast(i64, i) * sizeof(reader.ObjSection));
+        }
+        i = i + 1;
+    }
+    return cast(*reader.ObjSection, 0);
+}
+
+fn _ds_u32(p as *u8, off as i64) as i64 {
+    return cast(i64, p[off]) | (cast(i64, p[off + 1]) << 8) | (cast(i64, p[off + 2]) << 16) | (cast(i64, p[off + 3]) << 24);
+}
+
+fn _ds_put32(p as *u8, off as i64, v as i64) as void {
+    p[off] = cast(u8, v & 255);
+    p[off + 1] = cast(u8, (v >> 8) & 255);
+    p[off + 2] = cast(u8, (v >> 16) & 255);
+    p[off + 3] = cast(u8, (v >> 24) & 255);
+}
+
+// The line table in .cstdebug holds .text offsets of the object as the
+// assembler wrote it. After pruning, a row in a live function moves with it
+// and a row in a dead one goes (it would otherwise name a line of the dropped
+// function at whatever code now sits there); the same for the prologue-end
+// offsets after the table. Layout: magic, version, path length, path, padding
+// to 4, row count, rows of (offset, line), prologue-end count, offsets.
+fn _ds_remap_cstdebug(obj as *reader.ObjFile, oi as i32) as void {
+    let is *reader.ObjSection as ds = _ds_cstdebug(obj);
+    if (cast(i64, ds) == 0 || ds.size < 16) { return; }
+    let is *u8 as db = ds.data;
+    let is i64 as sl = _ds_u32(db, 8);
+    let is i64 as lo with mut = 12 + sl;
+    while ((lo & 3) != 0) { lo = lo + 1; }
+    if (lo + 4 > ds.size) { return; }
+    let is i64 as n = _ds_u32(db, lo);
+    let is i64 as base = lo + 4;
+    if (base + n * 8 > ds.size) { return; }
+    let is i64 as pbase = base + n * 8;
+    let is i64 as np with mut = 0;
+    if (pbase + 4 <= ds.size) { np = _ds_u32(db, pbase); }
+    if (pbase + 4 + np * 4 > ds.size) { np = 0; }
+    let is *u8 as nb = om.opt_alloc(ds.size + 8);
+    mem.memcpy(nb, db, base);
+    let is i64 as w with mut = base;
+    let is i64 as kept with mut = 0;
+    let is i64 as k with mut = 0;
+    while (k < n) {
+        let is i64 as off = _ds_u32(db, base + k * 8);
+        let is i32 as fi = ds_find_site(oi, off);
+        if (fi >= 0 && ds_f(fi).live == 1) {
+            let is *DeadStripFunc as f = ds_f(fi);
+            _ds_put32(nb, w, f.new_start + (off - f.rstart));
+            _ds_put32(nb, w + 4, _ds_u32(db, base + k * 8 + 4));
+            w = w + 8;
+            kept = kept + 1;
+        }
+        k = k + 1;
+    }
+    _ds_put32(nb, lo, kept);
+    let is i64 as wc = w;
+    let is i64 as pkept with mut = 0;
+    w = w + 4;
+    k = 0;
+    while (k < np) {
+        let is i64 as off = _ds_u32(db, pbase + 4 + k * 4);
+        let is i32 as fi = ds_find_site(oi, off);
+        if (fi >= 0 && ds_f(fi).live == 1) {
+            let is *DeadStripFunc as f = ds_f(fi);
+            _ds_put32(nb, w, f.new_start + (off - f.rstart));
+            w = w + 4;
+            pkept = pkept + 1;
+        }
+        k = k + 1;
+    }
+    if (pbase + 4 <= ds.size) { _ds_put32(nb, wc, pkept); }
+    else { w = wc; }
+    ds.data = nb;
+    ds.size = w;
+}
+
 fn dead_strip(ls as *LinkerState) as void {
     let is i32 as nobj = ls.obj_count;
     if (nobj <= 0) { return; }
@@ -759,6 +844,7 @@ fn dead_strip(ls as *LinkerState) as void {
                 ri = ri + 1;
             }
             obj.reloc_count = wi;
+            _ds_remap_cstdebug(obj, oi);
             obj.text.data = nt;
             obj.text.size = total;
         }
