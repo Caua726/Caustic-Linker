@@ -282,6 +282,22 @@ fn _link_result(output_path as *u8, status as i32) as i32 {
     return status;
 }
 
+// A static executable's .eh_frame and .eh_frame_hdr close its R+X segment,
+// and their size is only known once the symbols are (one FDE per surviving
+// function) — after assign_addresses placed .rodata. When they reach past the
+// page .rodata starts on, the R+W segment would be mapped over their tail and
+// the unwinder would read .rodata as its table. Then move R+W up and rebuild
+// the symbols, as the dynamic writer does for its own layout. An image that
+// fits keeps its addresses, byte for byte.
+fn _fit_rw_after_eh(ls as *linker.LinkerState) as i32 {
+    let is i64 as rx_end = writer.rx_end_vaddr(ls);
+    if (rx_end <= ls.rodata_vaddr) { return 0; }
+    ls.rx_min_end = rx_end;
+    linker.assign_addresses(ls);
+    linker.gsym_clear(linker.get_gsyms(ls));
+    return linker.build_symtab(ls);
+}
+
 fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
              lib_names as *u8, lib_count as i32) as i32 {
     let is *i64 as paths_arr = cast(*i64, obj_paths);
@@ -415,6 +431,12 @@ fn link_objs(obj_paths as *u8, obj_count as i32, output_path as *u8,
         ldyn.alloc_dynamic_bufs(&ls);
         write_err = writer.write_dynamic_executable(&ls, output_path);
     } else {
+        // .eh_frame and .eh_frame_hdr close the R+X segment, after the
+        // addresses were assigned. When they reach past the page where .rodata
+        // starts, the R+W segment would be mapped over their tail and the
+        // unwinder would read .rodata as its table: move R+W up and rebuild
+        // the symbols, as the dynamic writer does with its own layout.
+        if (_fit_rw_after_eh(&ls) != 0) { return _link_result(output_path, 1); }
         linker.define_eh_frame_hdr(&ls, writer.eh_frame_hdr_vaddr(&ls));
         reloc.apply_relocations(&ls);
         write_err = writer.write_executable(&ls, output_path);
@@ -805,7 +827,8 @@ fn main(argc as i64, argv as i64) as i32 {
         // symtab rebuild, relocation application, and metadata generation
         write_err = writer.write_dynamic_executable(&ls, output_path);
     } else {
-        // Static linking path (unchanged)
+        // Static linking path
+        if (_fit_rw_after_eh(&ls) != 0) { return _link_result(output_path, 1); }
         // Phase 4: Apply relocations
         reloc.apply_relocations(&ls);
 

@@ -157,6 +157,9 @@ struct LinkerState {
     do_map as i32;
     keep_empty as i32;
     freestanding as i32;
+    rx_min_end as i64;      // lowest vaddr the R+X segment may end at (0 = none):
+                            // set when .eh_frame + .eh_frame_hdr, which close
+                            // that segment, reach past where .rodata was put
     is_shared as i32;       // 1 when emitting a .so/.dll (no entry, base 0)
     line_layout as i32;     // 1: the .loopalign layout of --cpu=znver3: functions keep
                             // their offset in a 64-byte line, each .text starts 32 in
@@ -253,6 +256,7 @@ fn linker_init(base_addr as i64) as LinkerState {
     ls.do_map = 0;
     ls.keep_empty = 0;
     ls.freestanding = 0;
+    ls.rx_min_end = 0;
     ls.is_shared = 0;
     ls.align_funcs = 0;
     ls.line_layout = 0;
@@ -1039,6 +1043,7 @@ fn assign_addresses(ls as *LinkerState) as void {
         }
         xi = xi + 1;
     }
+    if (ls.rx_min_end > rx_end) { rx_end = ls.rx_min_end; }
     let is i64 as rw_start with mut = rx_end;
     if (rx_end % 4096 != 0) {
         rw_start = rx_end + 4096 - (rx_end % 4096);
