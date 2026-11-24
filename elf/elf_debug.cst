@@ -227,6 +227,7 @@ fn _build_line(out as *reader.ByteBuffer,
         }
         let is i64 as cur_addr with mut = start;
         let is i64 as cur_line with mut = 1;
+        let is i32 as cur_file with mut = fn_file[f];
         // A row at the function's own address, on its first line. gdb looks the
         // entry up before anything else: with no row there (a frameless -O2
         // function's first row comes after its `sub rsp`) it finds no line for
@@ -250,6 +251,11 @@ fn _build_line(out as *reader.ByteBuffer,
                     reader.buf_emit8(out, cast(i32, DW_LNS_advance_pc));
                     _uleb(out, a - cur_addr);
                     cur_addr = a;
+                }
+                if (loc_f[li] != cur_file) {                   // code copied from another file's function
+                    cur_file = loc_f[li];
+                    reader.buf_emit8(out, 4);                  // DW_LNS_set_file
+                    _uleb(out, cast(i64, cur_file + 1));
                 }
                 if (l != cur_line) {
                     reader.buf_emit8(out, cast(i32, DW_LNS_advance_line));

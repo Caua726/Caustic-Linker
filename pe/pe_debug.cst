@@ -757,9 +757,23 @@ fn build_module_stream(ls as *linker.LinkerState,
     }
 
     if (*out_source_len == 0) { return 0; }
-    let is i64 as num_locs = cast(i64, merged_count);
+    let is i64 as num_locs with mut = cast(i64, merged_count);
     pf.module_file(*out_source, *out_source_len);          // ordinal 0: the object's own source
     _module_file_switches(d_sel, merged_files, num_locs);
+    // Of the rows at one address the last says what the code there is; readers
+    // differ on which of several they report.
+    let is i64 as wr with mut = 0;
+    let is i64 as rd with mut = 0;
+    while (rd < num_locs) {
+        if (rd + 1 == num_locs || merged_offsets[rd + 1] != merged_offsets[rd]) {
+            merged_offsets[wr] = merged_offsets[rd];
+            merged_lines[wr] = merged_lines[rd];
+            merged_files[wr] = merged_files[rd];
+            wr = wr + 1;
+        }
+        rd = rd + 1;
+    }
+    num_locs = wr;
 
     // 2. Collect text-section gsyms sorted by vaddr.
     let is *linker.GlobalSymTab as gsyms = linker.get_gsyms(ls);
@@ -980,16 +994,22 @@ fn build_module_stream(ls as *linker.LinkerState,
         let is i64 as r1 = _row_at(merged_offsets, num_locs, fn_obj_end);
         if (r1 <= r0) { fi = fi + 1; continue; }
 
-        let is i64 as ln_sub = _start_subsec(out_buf, DEBUG_S_LINES);
-        reader.buf_emit32_le(out_buf, fn_section_off); // offCon
-        reader.buf_emit16_le(out_buf, 1);             // segCon = .text
-        reader.buf_emit16_le(out_buf, 0);             // flags
-        reader.buf_emit32_le(out_buf, fn_size);       // cbCon
-        // One block per run of rows of one file.
+        // One subsection per run of rows of one file, covering that run's code:
+        // readers take the rows of a subsection as one ascending sequence, and
+        // blocks of several files (code copied from another module) are not.
         let is i64 as r with mut = r0;
         while (r < r1) {
             let is i64 as re with mut = r;
             while (re < r1 && merged_files[re] == merged_files[r]) { re = re + 1; }
+            let is i64 as run_lo with mut = 0;                 // from the function's entry
+            if (r > r0) { run_lo = cast(i64, merged_offsets[r]) - fn_obj_off; }
+            let is i64 as run_hi with mut = fn_size;
+            if (re < r1) { run_hi = cast(i64, merged_offsets[re]) - fn_obj_off; }
+            let is i64 as ln_sub = _start_subsec(out_buf, DEBUG_S_LINES);
+            reader.buf_emit32_le(out_buf, fn_section_off + run_lo);   // offCon
+            reader.buf_emit16_le(out_buf, 1);             // segCon = .text
+            reader.buf_emit16_le(out_buf, 0);             // flags
+            reader.buf_emit32_le(out_buf, run_hi - run_lo);           // cbCon
             // offFile: where the file's entry is in FILECHKSMS (8 bytes each).
             reader.buf_emit32_le(out_buf, cast(i64, merged_files[r]) * 8);
             reader.buf_emit32_le(out_buf, re - r);
@@ -997,13 +1017,13 @@ fn build_module_stream(ls as *linker.LinkerState,
             // LineBlockFragmentHeader) plus the entries.
             reader.buf_emit32_le(out_buf, 12 + (re - r) * 8);
             while (r < re) {
-                reader.buf_emit32_le(out_buf, cast(i64, merged_offsets[r]) - fn_obj_off);
+                reader.buf_emit32_le(out_buf, cast(i64, merged_offsets[r]) - fn_obj_off - run_lo);
                 // line | statement bit
                 reader.buf_emit32_le(out_buf, (cast(i64, merged_lines[r]) & 16777215) + 2147483648);
                 r = r + 1;
             }
+            _patch_subsec_size(out_buf, ln_sub);
         }
-        _patch_subsec_size(out_buf, ln_sub);
 
         fi = fi + 1;
     }
