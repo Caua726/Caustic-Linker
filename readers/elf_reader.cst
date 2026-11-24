@@ -24,6 +24,7 @@ let is i32 as SHF_EXECINSTR with imut = 4;
 // Symbol binding/type
 let is i32 as STB_LOCAL with imut = 0;
 let is i32 as STB_GLOBAL with imut = 1;
+let is i32 as STB_WEAK with imut = 2;
 let is i32 as STT_NOTYPE with imut = 0;
 let is i32 as STT_SECTION with imut = 3;
 

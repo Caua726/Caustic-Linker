@@ -23,6 +23,7 @@ struct GlobalSym {
     vaddr as i64;       // final virtual address
     obj_idx as i32;     // which .o file defined this
     defined as i32;     // 1 if defined, 0 if undefined
+    weak as i32;        // the definition is a weak one
 }
 
 struct GlobalSymTab {
@@ -114,6 +115,7 @@ fn gsym_add(st as *GlobalSymTab, name as *u8, name_len as i32, section as i32,
     g.vaddr = vaddr;
     g.obj_idx = obj_idx;
     g.defined = defined;
+    g.weak = 0;
     st.count = st.count + 1;
     if (st.count * 2 > st.index_cap) {
         om.opt_free(cast(*u8, st.index));
@@ -472,6 +474,7 @@ struct DeadStripFunc {
     rstart as i64;     // copy-range start within obj.text (0 for the first func)
     rend as i64;       // copy-range end (exclusive)
     live as i32;
+    weak as i32;
     new_start as i64;  // entry offset in the pruned .text
 }
 
@@ -509,7 +512,8 @@ fn ds_find_name(name as *u8, name_len as i32) as i32 {
     return cast(i32, 0 - 1);
 }
 
-// In order, so a name defined twice finds its first definition.
+// In order, so a name defined twice finds its first definition, or the first that
+// is not weak (as build_symtab).
 fn ds_build_index() as void {
     ds_index_cap = 1024;
     while (ds_index_cap < ds_count * 2 + 2) { ds_index_cap = ds_index_cap * 2; }
@@ -522,7 +526,10 @@ fn ds_build_index() as void {
         let is i32 as seen with mut = 0;
         while (ds_index[h] != 0 && seen == 0) {
             let is *DeadStripFunc as o = ds_f(ds_index[h] - 1);
-            if (ds_name_eq(o.name, o.name_len, f.name, f.name_len) == 1) { seen = 1; }
+            if (ds_name_eq(o.name, o.name_len, f.name, f.name_len) == 1) {
+                seen = 1;
+                if (o.weak == 1 && f.weak == 0) { ds_index[h] = i + 1; }
+            }
             else { h = (h + 1) & mask; }
         }
         if (seen == 0) { ds_index[h] = i + 1; }
@@ -685,12 +692,14 @@ fn dead_strip(ls as *LinkerState) as void {
         let is i32 as si with mut = 0;
         while (si < obj.sym_count) {
             let is *reader.ObjSym as s = reader.sym_get(obj, si);
-            if (s.section == reader.SECIDX_TEXT && s.binding == reader.STB_GLOBAL
+            if (s.section == reader.SECIDX_TEXT && (s.binding == reader.STB_GLOBAL || s.binding == reader.STB_WEAK)
                 && s.sym_type != reader.STT_SECTION && s.name_len > 0) {
                 if (ds_count < ds_cap) {
                     let is *DeadStripFunc as f = ds_f(ds_count);
                     f.obj_idx = oi; f.name = s.name; f.name_len = s.name_len;
                     f.value = s.value; f.live = 0; f.new_start = 0;
+                    f.weak = 0;
+                    if (s.binding == reader.STB_WEAK) { f.weak = 1; }
                     ds_count = ds_count + 1;
                 }
             }
@@ -894,7 +903,7 @@ fn dead_strip(ls as *LinkerState) as void {
         let is i32 as si with mut = 0;
         while (si < obj.sym_count) {
             let is *reader.ObjSym as sy = reader.sym_get(obj, si);
-            if (sy.section == 0 && sy.binding == reader.STB_GLOBAL && sy.name_len > 0) {
+            if (sy.section == 0 && sy.binding != reader.STB_LOCAL && sy.name_len > 0) {
                 let is i32 as gi = ds_find_name(sy.name, sy.name_len);
                 if (gi >= 0 && ds_f(gi).live == 0) { sy.binding = reader.STB_LOCAL; }
             }
@@ -1421,12 +1430,16 @@ fn build_symtab(ls as *LinkerState) as i32 {
 
             if (si == 0 || sym.sym_type == reader.STT_SECTION) {
                 // Skip null and section symbols
-            } else if (sym.binding == reader.STB_GLOBAL && sym.section != 0) {
+            } else if ((sym.binding == reader.STB_GLOBAL || sym.binding == reader.STB_WEAK) && sym.section != 0) {
+                let is i32 as is_weak with mut = 0;
+                if (sym.binding == reader.STB_WEAK) { is_weak = 1; }
                 let is i64 as vaddr = resolve_sym_vaddr(ls, obj, sym.section, sym.value);
                 let is i32 as existing = gsym_find(gsyms, sym.name, sym.name_len);
                 if (existing >= 0) {
                     let is *GlobalSym as eg = gsym_get(gsyms, existing);
-                    if (eg.defined == 1) {
+                    if (eg.defined == 1 && is_weak == 1) {
+                        // There is one already: this copy is not used.
+                    } else if (eg.defined == 1 && eg.weak == 0) {
                         reader.print_str("error: duplicate symbol: ");
                         io._write_fd(io.STDERR, sym.name, cast(i64, sym.name_len));
                         reader.print_str("\n");
@@ -1436,11 +1449,14 @@ fn build_symtab(ls as *LinkerState) as i32 {
                         eg.vaddr = vaddr;
                         eg.obj_idx = i;
                         eg.defined = 1;
+                        eg.weak = is_weak;
                     }
                 } else {
-                    gsym_add(gsyms, sym.name, sym.name_len, sym.section, vaddr, i, 1);
+                    let is i32 as ng = gsym_add(gsyms, sym.name, sym.name_len, sym.section, vaddr, i, 1);
+                    let is *GlobalSym as nw = gsym_get(gsyms, ng);
+                    nw.weak = is_weak;
                 }
-            } else if (sym.binding == reader.STB_GLOBAL && sym.section == 0) {
+            } else if (sym.binding != reader.STB_LOCAL && sym.section == 0) {
                 let is i32 as existing = gsym_find(gsyms, sym.name, sym.name_len);
                 if (existing < 0) {
                     gsym_add(gsyms, sym.name, sym.name_len, 0, 0, i, 0);
