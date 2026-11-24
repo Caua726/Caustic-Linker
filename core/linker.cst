@@ -3,6 +3,7 @@ use "../../std/io.cst" as io;
 use "../../src/ir/opt_mem.cst" as om;
 use "../../src/codegen/target.cst" as tgt;
 use "../readers/elf_reader.cst" as reader;
+use "../../src/debug_proto.cst" as dbgproto;
 
 // ============================================================
 // linker.cst — Core linking logic
@@ -595,10 +596,13 @@ fn _ds_remap_cstdebug(obj as *reader.ObjFile, oi as i32) as void {
     if (pbase + 4 + np * 4 > ds.size) { np = 0; }
     let is *u8 as nb = om.opt_alloc(ds.size + 8);
     mem.memcpy(nb, db, base);
+    // kept_before[k]: rows kept ahead of old row k, to renumber the file switches.
+    let is *i64 as kept_before = cast(*i64, om.opt_alloc((n + 1) * 8));
     let is i64 as w with mut = base;
     let is i64 as kept with mut = 0;
     let is i64 as k with mut = 0;
     while (k < n) {
+        kept_before[k] = kept;
         let is i64 as off = _ds_u32(db, base + k * 8);
         let is i32 as fi = ds_find_site(oi, off);
         if (fi >= 0 && ds_f(fi).live == 1) {
@@ -626,8 +630,35 @@ fn _ds_remap_cstdebug(obj as *reader.ObjFile, oi as i32) as void {
         }
         k = k + 1;
     }
+    kept_before[n] = kept;
     if (pbase + 4 <= ds.size) { _ds_put32(nb, wc, pkept); }
     else { w = wc; }
+    // File switches after the prologue-end table: same paths, row indices renumbered.
+    let is i64 as sbase = pbase + 4 + np * 4;
+    if (pbase + 4 <= ds.size && sbase + 8 <= ds.size && _ds_u32(db, sbase) == dbgproto.CSTDEBUG_FILES_MAGIC) {
+        let is i64 as nsw = _ds_u32(db, sbase + 4);
+        _ds_put32(nb, w, dbgproto.CSTDEBUG_FILES_MAGIC);
+        _ds_put32(nb, w + 4, nsw);
+        w = w + 8;
+        let is i64 as so with mut = sbase + 8;
+        let is i64 as si with mut = 0;
+        while (si < nsw && so + 8 <= ds.size) {
+            let is i64 as from with mut = _ds_u32(db, so);
+            if (from > n) { from = n; }
+            let is i64 as pl = _ds_u32(db, so + 4);
+            if (so + 8 + pl > ds.size) { si = nsw; }
+            else {
+                _ds_put32(nb, w, kept_before[from]);
+                _ds_put32(nb, w + 4, pl);
+                mem.memcpy(cast(*u8, cast(i64, nb) + w + 8), cast(*u8, cast(i64, db) + so + 8), pl);
+                w = w + 8 + pl;
+                while ((w & 3) != 0) { nb[w] = cast(u8, 0); w = w + 1; }
+                so = so + 8 + pl;
+                while ((so & 3) != 0) { so = so + 1; }
+                si = si + 1;
+            }
+        }
+    }
     ds.data = nb;
     ds.size = w;
 }

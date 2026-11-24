@@ -1440,6 +1440,7 @@ fn build_debug(ls as *linker.LinkerState,
                 let is i64 as n = _read_u32_at(db, lo);
                 let is i64 as base = lo + 4;
                 let is i64 as tbase = ls.text_vaddr + o.text_offset;
+                let is i32 as obj_first = nloc;
                 let is i64 as k with mut = 0;
                 while (k < n) {
                     if (nloc >= cap) {
@@ -1473,6 +1474,54 @@ fn build_debug(ls as *linker.LinkerState,
                         pend_v[npend] = tbase + _read_u32_at(db, pbase + 4 + k2 * 4);
                         npend = npend + 1;
                         k2 = k2 + 1;
+                    }
+                    // File switches (one object, several source files: a -g
+                    // whole-program build). Rows from a switch's loc index on
+                    // name its file, until the next switch.
+                    let is i64 as sbase with mut = pbase + 4 + np * 4;
+                    if (sbase + 8 <= ds.size && _read_u32_at(db, sbase) == dbgproto.CSTDEBUG_FILES_MAGIC) {
+                        let is i64 as nsw = _read_u32_at(db, sbase + 4);
+                        let is i64 as so with mut = sbase + 8;
+                        let is i64 as si with mut = 0;
+                        while (si < nsw && so + 8 <= ds.size) {
+                            let is i64 as from = _read_u32_at(db, so);
+                            let is i64 as pl2 = _read_u32_at(db, so + 4);
+                            let is *u8 as pp = cast(*u8, cast(i64, db) + so + 8);
+                            if (so + 8 + pl2 > ds.size) { si = nsw; }
+                            else {
+                                // The path's entry: one already in the table, or a new one.
+                                let is i32 as fidx with mut = 0 - 1;
+                                let is i32 as q with mut = 0;
+                                while (q < nsrc && fidx < 0) {
+                                    if (cast(i64, src_lens[q]) == pl2) {
+                                        let is *u8 as qp = cast(*u8, srcs[q]);
+                                        let is i64 as c with mut = 0;
+                                        while (c < pl2 && qp[c] == pp[c]) { c = c + 1; }
+                                        if (c == pl2) { fidx = q; }
+                                    }
+                                    q = q + 1;
+                                }
+                                if (fidx < 0) {
+                                    if (nsrc >= scap) {
+                                        let is i32 as nc = scap * 2;
+                                        let is *i64 as np2 = cast(*i64, om.opt_alloc(cast(i64, nc) * 8));
+                                        let is *i32 as nl3 = cast(*i32, om.opt_alloc(cast(i64, nc) * 4));
+                                        let is i32 as ci with mut = 0;
+                                        while (ci < nsrc) { np2[ci] = srcs[ci]; nl3[ci] = src_lens[ci]; ci = ci + 1; }
+                                        srcs = np2; src_lens = nl3; scap = nc;
+                                    }
+                                    fidx = nsrc;
+                                    srcs[nsrc] = cast(i64, pp);
+                                    src_lens[nsrc] = cast(i32, pl2);
+                                    nsrc = nsrc + 1;
+                                }
+                                let is i64 as r with mut = from;
+                                while (r < n) { loc_f[cast(i64, obj_first) + r] = fidx; r = r + 1; }
+                                so = so + 8 + pl2;
+                                while ((so & 3) != 0) { so = so + 1; }
+                                si = si + 1;
+                            }
+                        }
                     }
                 }
             }
