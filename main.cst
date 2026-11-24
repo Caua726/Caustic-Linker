@@ -291,7 +291,10 @@ fn _link_result(output_path as *u8, status as i32) as i32 {
 // fits keeps its addresses, byte for byte.
 fn _fit_rw_after_eh(ls as *linker.LinkerState) as i32 {
     let is i64 as rx_end = writer.rx_end_vaddr(ls);
-    if (rx_end <= ls.rodata_vaddr) { return 0; }
+    // 0 means no unwind tables. Compared as a sentinel, not by order: with a
+    // high-half --base (a kernel at 0xFFFFFFFF80000000) every address is
+    // negative as an i64, and 0 would sort past all of them.
+    if (rx_end == 0 || rx_end <= ls.rodata_vaddr) { return 0; }
     ls.rx_min_end = rx_end;
     linker.assign_addresses(ls);
     linker.gsym_clear(linker.get_gsyms(ls));
